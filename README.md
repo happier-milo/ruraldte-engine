@@ -8,8 +8,7 @@ y envía DTE **directo al SII** — sin intermediarios, sin costo por documento.
 [![Tests](https://github.com/happier-milo/ruraldte-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/happier-milo/ruraldte-engine/actions/workflows/ci.yml)
 
 Es el mismo motor que corre en producción en [ruraldte.cl](https://ruraldte.cl),
-no una versión recortada. Está **certificado y autorizado por el SII** (Res. Ex.
-80/2014) para los 12 tipos del catálogo:
+no una versión recortada. Cubre los 12 tipos del catálogo:
 
 | | Tipos |
 |---|---|
