@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    name: Motor + provider (Deno)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      # libxml2-utils NO es opcional: `xsd-conformance.test.ts` y `aec.test.ts`
+      # se AUTO-SALTEAN si falta xmllint. Sin este paso, el test que valida
+      # contra los esquemas oficiales del SII pasaría en verde sin ejecutarse —
+      # que es la peor forma de estar tranquilo.
+      - name: xmllint (obligatorio, no opcional)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libxml2-utils
+          xmllint --version
+      - run: deno task check
+      - run: deno task test
+
+  pdf:
+    name: Servicio de PDF + timbre PDF417 (Node)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pdf-service
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm ci
+      # El conteo sale de ESTA corrida, no de una segunda: el README promete un
+      # número y un número que nadie verifica se desactualiza —pasó a las horas
+      # de publicar, decía 80 cuando ya eran 84—.
+      - name: tests + el README dice la verdad sobre cuántos son
+        run: |
+          npm test 2>&1 | tee /tmp/pdf.txt
+          n=$(grep -oE '^. pass [0-9]+' /tmp/pdf.txt | grep -oE '[0-9]+')
+          deno_n=$(grep -oE '#[[:space:]]*[0-9]+: [0-9]+ motor' ../README.md | grep -oE '[0-9]+' | head -1)
+          total=$((deno_n + n))
+          echo "motor+provider: $deno_n · pdf-service: $n · total: $total"
+          grep -qE "#[[:space:]]*$n: PDF \+ timbre" ../README.md \
+            || { echo "el README no dice $n en la línea del pdf-service"; exit 1; }
+          grep -qF "$total tests ($deno_n + $n)" ../README.md \
+            || { echo "el README no dice '$total tests ($deno_n + $n)'"; exit 1; }
+
+  licencia:
+    name: Cabeceras SPDX + material prohibido
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash scripts/check-license-headers.sh
+      - run: bash scripts/check-no-secrets.sh
+
+  dco:
+    name: DCO (Signed-off-by)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Verificar firma de cada commit del PR
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/check-dco.sh "$BASE" "$HEAD"

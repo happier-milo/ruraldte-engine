@@ -1,0 +1,16 @@
+node_modules/
+.DS_Store
+*.log
+coverage/
+deno.lock
+
+# NUNCA. Material de firma tributaria: acá no entra ni de casualidad.
+*.pfx
+*.p12
+*.key
+*.pem
+set.json
+out/
+
+# Kit XSD del SII bajado con scripts/fetch-xsd.sh (material del SII, no se versiona)
+.sii-xsd/

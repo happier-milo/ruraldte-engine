@@ -1,0 +1,20 @@
+name: Bug
+description: Algo del motor no hace lo que dice
+labels: ["bug"]
+body:
+  - type: textarea
+    id: que-pasa
+    attributes:
+      label: Qué pasa
+    validations: { required: true }
+  - type: textarea
+    id: reproducir
+    attributes:
+      label: Cómo reproducirlo
+      description: Idealmente, un test que falla.
+      render: typescript
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes:
+      label: Versión / commit

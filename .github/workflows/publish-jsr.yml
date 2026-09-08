@@ -1,0 +1,39 @@
+name: Publicar en JSR
+
+# Publica @ruraldte/engine en jsr.io. SIN secretos: JSR autentica el workflow por
+# OIDC contra el repositorio vinculado al paquete, así que no hay token que rotar
+# ni que filtrar. Requiere (una sola vez) que el paquete exista en jsr.io y esté
+# vinculado a este repo.
+#
+# Se dispara al empujar un tag `v*` (la versión del tag debe calzar con la de
+# deno.json) o a mano desde la pestaña Actions.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # lo que JSR usa para verificar quién publica
+    steps:
+      - uses: actions/checkout@v7
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      # No se publica algo que no pasa sus propios tests. xmllint incluido: sin él
+      # la conformidad XSD se auto-saltea y estaríamos publicando sin validar
+      # contra los esquemas del SII.
+      - name: xmllint
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libxml2-utils
+      - run: deno task check
+      - run: deno task test
+      - name: la versión del tag calza con deno.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(deno eval 'console.log(JSON.parse(Deno.readTextFileSync("deno.json")).version)')"
+          [ "$tag" = "$pkg" ] || { echo "tag v$tag ≠ deno.json $pkg"; exit 1; }
+      - run: deno publish

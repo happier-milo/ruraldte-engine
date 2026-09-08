@@ -1,0 +1,36 @@
+RuralDTE Engine
+Copyright 2026 Comunidad Rural SpA
+
+Este producto incluye software desarrollado por Comunidad Rural SpA
+(https://ruraldte.cl).
+
+--------------------------------------------------------------------------------
+Esquemas XSD del SII (engine/xsd/*.xsd)
+--------------------------------------------------------------------------------
+Los archivos bajo `engine/xsd/` son los esquemas oficiales del Servicio de
+Impuestos Internos de Chile (SII), publicados por el propio SII en:
+
+  https://www.sii.cl/factura_electronica/factura_mercado/schema_dte.zip
+  https://www.sii.cl/factura_electronica/factura_mercado/schema_envio_bol.zip
+  https://www.sii.cl/factura_electronica/factura_mercado/schema_libro_bol.zip
+
+Se distribuyen aquí sin modificación, con el único fin de permitir la validación
+local de los documentos que este motor construye. NO son obra de Comunidad Rural
+SpA, no están cubiertos por la licencia Apache 2.0 de este repositorio, y su
+titularidad y condiciones de uso son las que determine el SII. Si prefieres no
+redistribuirlos, `scripts/fetch-xsd.sh` los baja desde la fuente.
+
+--------------------------------------------------------------------------------
+Marcas
+--------------------------------------------------------------------------------
+"RuralDTE", "Comunidad Rural" y sus logotipos son marcas de Comunidad Rural SpA.
+La licencia Apache 2.0 no concede ningún derecho sobre ellas (Apache-2.0 §6).
+Ver TRADEMARKS.md.
+
+--------------------------------------------------------------------------------
+Este no es un producto del SII
+--------------------------------------------------------------------------------
+Comunidad Rural SpA no es el Servicio de Impuestos Internos ni actúa en su
+representación. Este software no constituye asesoría tributaria. La
+responsabilidad tributaria de los documentos emitidos es siempre del
+contribuyente emisor.

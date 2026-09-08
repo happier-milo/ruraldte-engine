@@ -1,0 +1,38 @@
+name: El SII rechaza un documento
+description: El motor genera el DTE pero el SII lo rechaza o lo acepta con reparos
+labels: ["sii"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Antes de pegar nada:** cambia RUT, nombres y montos por datos
+        sintéticos. Y **nunca** pegues un `.pfx`, su contraseña ni un CAF real
+        (el CAF trae la llave privada del folio).
+  - type: input
+    id: tipo
+    attributes:
+      label: Tipo de DTE
+      placeholder: "33 / 39 / 61 / 52 / 110 …"
+    validations: { required: true }
+  - type: dropdown
+    id: ambiente
+    attributes:
+      label: Ambiente
+      options: ["Certificación (Maullín)", "Producción (Palena)"]
+    validations: { required: true }
+  - type: textarea
+    id: glosa
+    attributes:
+      label: Respuesta literal del SII
+      description: El código y la glosa COMPLETA, tal cual. Sin interpretar.
+      render: text
+    validations: { required: true }
+  - type: textarea
+    id: xml
+    attributes:
+      label: XML generado (con datos sintéticos)
+      render: xml
+  - type: textarea
+    id: esperado
+    attributes:
+      label: Qué esperabas

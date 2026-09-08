@@ -1,0 +1,65 @@
+{
+  "_comment": "PLANTILLA. Reemplazá los casos con los del 'Set de Pruebas Boleta Electrónica' que te asignó el SII (archivo Set Prueba BE.txt). precio = bruto CON IVA para líneas afectas. exento:true para líneas exentas. NO subas datos reales del cert acá.",
+  "emisor": {
+    "rut": "78416626-0",
+    "legalName": "COMUNIDAD RURAL SPA",
+    "giro": "Servicios de software",
+    "address": "—",
+    "city": "—"
+  },
+  "caratula": {
+    "rutEmisor": "78416626-0",
+    "rutEnvia": "22222222-2",
+    "fchResol": "2026-06-07",
+    "nroResol": 0,
+    "fchInicio": "2026-06-07",
+    "fchFinal": "2026-06-07",
+    "secEnvio": 1,
+    "tmstFirmaEnv": "2026-06-07T12:00:00"
+  },
+  "setFolioReferencia": 1,
+  "cases": [
+    {
+      "caso": "CASO-1",
+      "tipoDocumento": 39,
+      "razonReferencia": "CASO-1",
+      "items": [
+        { "nombre": "Item afecto", "cantidad": 1, "precio": 11900 }
+      ]
+    },
+    {
+      "caso": "CASO-2",
+      "tipoDocumento": 39,
+      "razonReferencia": "CASO-2",
+      "items": [
+        { "nombre": "Item afecto", "cantidad": 3, "precio": 5950 }
+      ]
+    },
+    {
+      "caso": "CASO-3",
+      "tipoDocumento": 39,
+      "razonReferencia": "CASO-3",
+      "items": [
+        { "nombre": "Item A", "cantidad": 1, "precio": 9520 },
+        { "nombre": "Item B", "cantidad": 2, "precio": 2380 }
+      ]
+    },
+    {
+      "caso": "CASO-4",
+      "tipoDocumento": 39,
+      "razonReferencia": "CASO-4 item exento + afecto",
+      "items": [
+        { "nombre": "Agua (exento)", "cantidad": 1, "precio": 5000, "exento": true },
+        { "nombre": "Servicio afecto", "cantidad": 1, "precio": 11900 }
+      ]
+    },
+    {
+      "caso": "CASO-5",
+      "tipoDocumento": 39,
+      "razonReferencia": "CASO-5 unidad Kg",
+      "items": [
+        { "nombre": "Producto por kilo", "cantidad": 2.5, "unidadMedida": "Kg", "precio": 1190 }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Vulnerabilidad de seguridad
+    url: https://github.com/happier-milo/ruraldte-engine/security/advisories/new
+    about: NO abras un issue público. Repórtala en privado por acá.
+  - name: Servicio alojado (api.ruraldte.cl)
+    url: https://ruraldte.cl
+    about: Este repo es el motor. Para el servicio y su API, parte por el sitio.

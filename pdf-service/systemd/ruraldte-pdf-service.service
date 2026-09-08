@@ -1,0 +1,18 @@
+[Unit]
+Description=RuralDTE pdf-service — representacion grafica de DTE (boleta/factura/set)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/ruraldte/pdf-service
+EnvironmentFile=/opt/ruraldte/pdf-service/.env
+ExecStart=/usr/bin/node src/server.mjs
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

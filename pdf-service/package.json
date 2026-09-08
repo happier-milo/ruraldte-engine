@@ -1,0 +1,16 @@
+{
+  "name": "ruraldte-pdf-service",
+  "version": "0.1.0",
+  "description": "Representación gráfica de DTE chilenos en PDF con timbre PDF417 byte-mode (zxing-wasm): boleta 39/41, factura/NC/ND 33/34/56/61, guía 52, exportación 110/111/112, liquidación 43, factura de compra 46. Stateless.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "test:render": "node test/boleta-render.mjs && node test/factura-render.mjs"
+  },
+  "dependencies": {
+    "pdf-lib": "^1.17.1",
+    "zxing-wasm": "^2.2.4"
+  }
+}

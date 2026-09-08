@@ -1,0 +1,53 @@
+{
+  "name": "@ruraldte/engine",
+  "version": "0.4.0",
+  "license": "Apache-2.0",
+  "nodeModulesDir": "none",
+  "exports": {
+    ".": "./engine/factura-dte.ts",
+    "./boleta": "./engine/boleta-dte.ts",
+    "./factura": "./engine/factura-dte.ts",
+    "./ted": "./engine/boleta-ted.ts",
+    "./firma": "./engine/xml-signature.ts",
+    "./c14n": "./engine/c14n.ts",
+    "./sobre-boleta": "./engine/envio-boleta.ts",
+    "./sobre-dte": "./engine/envio-dte.ts",
+    "./sii-client": "./engine/sii-client.ts",
+    "./sii-legacy": "./engine/sii-legacy-upload.ts",
+    "./sii-folios": "./engine/sii-folios.ts",
+    "./sii-padron": "./engine/sii-padron.ts",
+    "./sii-watch": "./engine/sii-watch.ts",
+    "./sii-text": "./engine/sii-text.ts",
+    "./sii-codigos": "./engine/sii-codigos.ts",
+    "./aduana-codes": "./engine/aduana-codes.ts",
+    "./codes-fingerprint": "./engine/codes-fingerprint.ts",
+    "./libro-iecv": "./engine/libro-iecv.ts",
+    "./libro-guia": "./engine/libro-guia.ts",
+    "./consumo-folios": "./engine/consumo-folios.ts",
+    "./aec": "./engine/aec.ts",
+    "./intercambio": "./engine/intercambio.ts",
+    "./pkcs12": "./engine/pkcs12.ts",
+    "./cert-factura": "./engine/cert-factura.ts",
+    "./cert-harness": "./engine/cert-harness.ts",
+    "./cert-ruraldte": "./engine/cert-ruraldte.ts",
+    "./provider": "./provider/ruraldte.ts",
+    "./provider-types": "./provider/types.ts"
+  },
+  "publish": {
+    "include": [
+      "engine/**/*.ts",
+      "engine/xsd/**/*.xsd",
+      "provider/**/*.ts",
+      "LICENSE",
+      "NOTICE",
+      "README.md"
+    ],
+    "exclude": ["**/*.test.ts"]
+  },
+  "tasks": {
+    "test": "deno test -A engine/ provider/",
+    "check": "deno check engine/*.ts provider/*.ts cert-tools/*.ts",
+    "cert:xsd": "deno run -A cert-tools/validate-cert-factura-xsd.ts",
+    "cert:precheck": "deno run -A cert-tools/precheck-cert-factura.ts"
+  }
+}
