@@ -264,7 +264,11 @@ export async function legacyUpload(
     method: "POST",
     headers: {
       "User-Agent": userAgent,
-      "Referer": "https://comunidadrural.cl",
+      // SIN `Referer`. Llevaba uno hardcodeado con el dominio de quien construyó el
+      // motor, así que los envíos de CUALQUIER emisor viajaban con una marca ajena en
+      // la cabecera. No lo pide nadie: el endpoint autentica con la cookie TOKEN, no
+      // hay test que lo exija y entró con la implementación inicial, no como arreglo
+      // de un rechazo. Si algún día el SII lo exigiera, va como parámetro del caller.
       "Cookie": `TOKEN=${input.token}`,
       "Content-Type": `multipart/form-data; boundary=${boundary}`,
     },

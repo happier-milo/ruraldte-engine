@@ -466,7 +466,8 @@ export async function aecUpload(
     method: "POST",
     headers: {
       "User-Agent": input.userAgent ?? AEC_USER_AGENT,
-      "Referer": "https://ruraldte.cl",
+      // SIN `Referer` — ver la nota en sii-legacy-upload.ts: el dominio de quien
+      // construyó el motor no tiene por qué viajar en los envíos de otro.
       "Cookie": `TOKEN=${input.token}`,
       "Content-Type": `multipart/form-data; boundary=${boundary}`,
     },
