@@ -8,7 +8,17 @@ y envía DTE **directo al SII** — sin intermediarios, sin costo por documento.
 [![Tests](https://github.com/happier-milo/ruraldte-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/happier-milo/ruraldte-engine/actions/workflows/ci.yml)
 
 Es el mismo motor que corre en producción en [ruraldte.cl](https://ruraldte.cl),
-no una versión recortada. Cubre los 12 tipos del catálogo:
+no una versión recortada.
+
+> **El SII autoriza al contribuyente, no al software.** Dejó de certificar
+> programas hace años: hoy declaras con qué software vas a emitir y el proceso de
+> certificación lo recorre tu RUT. Así que nadie puede venderte un motor
+> "certificado por el SII" — lo que sí se puede decir de este es que **con él un
+> contribuyente real recorrió el proceso completo** (sets de prueba, muestras
+> impresas y declaración de cumplimiento) para los 12 tipos del catálogo, y emite
+> en producción desde junio de 2026.
+
+Los 12 tipos:
 
 | | Tipos |
 |---|---|
@@ -124,7 +134,9 @@ A propósito. Es una librería, no una plataforma:
 - No asigna folios de forma atómica (eso necesita una transacción; si dos
   procesos toman el mismo folio, el SII rechaza el segundo).
 - No custodia certificados, no maneja multi-tenant, no encola ni reintenta.
-- No hace el trámite de certificación por ti: el SII autoriza **por RUT**.
+- No hace el trámite de certificación por ti. El SII autoriza **por RUT**, así que
+  tienes que postular, correr tu set de pruebas y declarar cumplimiento con tu
+  propio contribuyente. `docs/DTE_CERT_APRENDIZAJES.md` es el mapa de ese camino.
 
 Todo eso vive en el servicio alojado ([ruraldte.cl](https://ruraldte.cl)) y no es
 open source. El motor sí, completo: si prefieres operarlo tú, tienes todo lo que
@@ -175,8 +187,11 @@ Vulnerabilidades: [SECURITY.md](SECURITY.md), nunca en un issue público.
 (DTE) straight to the SII — no per-document intermediary, no marginal cost.
 
 It is the same engine running in production at [ruraldte.cl](https://ruraldte.cl),
-SII-certified and authorized for all 12 document types (invoices, credit/debit
-notes, receipts, dispatch guides, export invoices, settlement invoices), plus the
+The SII authorizes the **taxpayer**, not the software — it stopped certifying
+programs years ago. What can be said about this engine: a real taxpayer used it to
+pass the SII's full certification process for all 12 document types (invoices,
+credit/debit notes, receipts, dispatch guides, export invoices, settlement
+invoices) and has been issuing in production since June 2026. It also covers the
 three statutory books, invoice assignment for factoring (AEC), Law 19.983
 acknowledgements, and PDF rendering with the PDF417 stamp.
 

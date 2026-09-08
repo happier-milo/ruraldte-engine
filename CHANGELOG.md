@@ -3,15 +3,26 @@
 Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) ·
 Versionado [SemVer](https://semver.org/lang/es/).
 
+## [0.4.1] — 2026-09-08
+
+### Corregido
+- **Una afirmación falsa en el README.** Decía que el motor está "certificado y
+  autorizado por el SII". No es así, y contradecía la propia documentación del
+  repo: el SII autoriza al **contribuyente**, no al software, y dejó de certificar
+  programas hace años. Reescrito con lo que sí es verificable —que con este motor un
+  contribuyente real recorrió el proceso completo para los 12 tipos— y de paso
+  explicando el régimen, que es lo que necesita saber quien quiera emitir con él.
+
 ## [0.4.0] — 2026-09-08
 
 Primera publicación como código abierto. El motor existía desde junio de 2026 y
 lleva meses emitiendo en producción; lo nuevo es la licencia, no el código.
 
 ### Qué trae
-- **Los 12 tipos del catálogo SII**, certificados y autorizados (Res. Ex. 80/2014):
-  boleta 39/41, factura 33/34, factura de compra 46, notas 56/61, guía 52,
-  exportación 110/111/112 y liquidación-factura 43.
+- **Los 12 tipos del catálogo SII**: boleta 39/41, factura 33/34, factura de compra
+  46, notas 56/61, guía 52, exportación 110/111/112 y liquidación-factura 43. Con
+  este motor un contribuyente real recorrió el proceso de certificación del SII
+  para todos ellos — el SII autoriza al contribuyente, no al software.
 - Los **tres libros** (ventas, compras, guías), **cesión electrónica** (AEC/RPETC
   para factoring), **intercambio** con los acuses de la Ley 19.983, consulta del
   padrón de contribuyentes y solicitud de folios.
