@@ -44,7 +44,9 @@ revocarla y nos hace perder tiempo a los dos.
 **Fuera** (repórtalo igual por el mismo canal, pero no vive en este repo):
 
 - El servicio alojado `api.ruraldte.cl`, el panel y su base de datos.
-- El SII. Si encuentras algo del SII, es del SII: escríbeles a ellos.
+- El SII. Si encuentras algo del SII, es del SII: escríbeles a ellos. Si lo que
+  buscas es entender qué controla el SII y qué no —y por qué que este motor sea
+  abierto no debilita nada—, está en [Cómo controla el SII](https://github.com/happier-milo/ruraldte-engine/blob/main/docs/COMO_CONTROLA_EL_SII.md).
 - Que el SII rechace un documento: eso es un bug normal → issue público.
 
 ## Qué esperar

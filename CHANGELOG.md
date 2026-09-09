@@ -3,6 +3,15 @@
 Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) ·
 Versionado [SemVer](https://semver.org/lang/es/).
 
+## [0.4.2] — 2026-09-09
+
+### Añadido
+- **`docs/COMO_CONTROLA_EL_SII.md`** — la respuesta a la primera pregunta sensata que
+  aparece cuando alguien ve un motor DTE abierto: si cualquiera puede usar cualquier
+  software, dónde quedan los controles. Las cuatro puertas del protocolo (certificado,
+  titular habilitado, RUT autorizado y cuota de folios), cada una con la referencia al
+  código donde se puede verificar. La escribió un lector preguntándola en público.
+
 ## [0.4.1] — 2026-09-08
 
 ### Corregido

@@ -138,6 +138,13 @@ A propósito. Es una librería, no una plataforma:
   tienes que postular, correr tu set de pruebas y declarar cumplimiento con tu
   propio contribuyente. `docs/DTE_CERT_APRENDIZAJES.md` es el mapa de ese camino.
 
+> **¿Si cualquiera puede usar cualquier software, dónde están los controles?** Es la
+> pregunta correcta, y tiene respuesta concreta: el SII no valida tu programa, valida
+> cuatro cosas en cada request —tu certificado, que el titular pueda actuar por esa
+> empresa, que el RUT esté autorizado, y una cuota de folios que él reparte—.
+> Explicado con las referencias al código en
+> [**Cómo controla el SII**](https://github.com/happier-milo/ruraldte-engine/blob/main/docs/COMO_CONTROLA_EL_SII.md).
+
 Todo eso vive en el servicio alojado ([ruraldte.cl](https://ruraldte.cl)) y no es
 open source. El motor sí, completo: si prefieres operarlo tú, tienes todo lo que
 se necesita para emitir.
