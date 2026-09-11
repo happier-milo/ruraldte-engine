@@ -17,9 +17,10 @@
 // sin libxml. Localmente: `xmllint --version`.
 // ============================================================================
 
-import { assert } from "jsr:@std/assert@1";
+import { assert, assertStringIncludes } from "jsr:@std/assert@1";
 import forge from "npm:node-forge@1.3.1";
 import { buildSignedFacturaDte, type FacturaDteInput } from "./factura-dte.ts";
+import { buildCertFacturaDtes, DEFAULT_FACTURA_CERT_RECEPTOR, EXPORT_CERT_CASES } from "./cert-factura.ts";
 import { buildEnvioDte } from "./envio-dte.ts";
 
 // ── helpers de prueba (cert self-signed + CAF dummy), espejo de factura-dte.test ─
@@ -116,6 +117,42 @@ async function hasXmllint(): Promise<boolean> {
 
 const HAS_XMLLINT = await hasXmllint();
 
+/** Sobre EnvioDTE de prueba con los DTE firmados que se le pasen. */
+function envio(signedDtes: Parameters<typeof buildEnvioDte>[0]["signedDtes"], pfx: Uint8Array): string {
+  return buildEnvioDte({
+    setId: "SET_CONFORMANCE",
+    signedDtes,
+    caratula: {
+      rutEmisor: "78416626-0",
+      rutEnvia: "22222222-2",
+      rutReceptor: "60803000-K",
+      fchResol: "2026-06-08",
+      nroResol: 0,
+      tmstFirmaEnv: "2026-06-12T22:11:10",
+    },
+    pfxBytes: pfx,
+    password: "pass",
+  }).xml;
+}
+
+/** xmllint del sobre (bytes ISO-8859-1 reales) contra EnvioDTE_v10.xsd v2.5. */
+async function validarContraXsd(xml: string): Promise<void> {
+  const xmlPath = await Deno.makeTempFile({ prefix: "ruraldte_envio_", suffix: ".xml" });
+  const xsdPath = new URL("./xsd/EnvioDTE_v10.xsd", import.meta.url).pathname;
+  try {
+    await Deno.writeFile(xmlPath, toLatin1(xml));
+    const { code, stderr } = await new Deno.Command("xmllint", {
+      args: ["--noout", "--schema", xsdPath, xmlPath],
+      stdout: "null",
+      stderr: "piped",
+    }).output();
+    const err = new TextDecoder().decode(stderr);
+    assert(code === 0, `xmllint reprobó el EnvioDTE contra el XSD v2.5:\n${err}`);
+  } finally {
+    await Deno.remove(xmlPath).catch(() => {});
+  }
+}
+
 Deno.test({
   name: "EnvioDTE (33/34/56/61 firmados) valida contra los XSD v2.5 del SII",
   ignore: !HAS_XMLLINT,
@@ -146,39 +183,73 @@ Deno.test({
       referencias: [{ tipoDocRef: "33", folioRef: 100, fchRef: "2026-06-12", codRef: 3, razonRef: "Corrige monto" }],
     };
 
-    const { xml } = buildEnvioDte({
-      setId: "SET_CONFORMANCE",
-      signedDtes: [
-        buildSignedFacturaDte(f33, pfx, "pass"),
-        buildSignedFacturaDte(f34, pfx, "pass"),
-        buildSignedFacturaDte(nc61, pfx, "pass"),
-        buildSignedFacturaDte(nd56, pfx, "pass"),
-      ],
-      caratula: {
-        rutEmisor: "78416626-0",
-        rutEnvia: "22222222-2",
-        rutReceptor: "60803000-K",
-        fchResol: "2026-06-08",
-        nroResol: 0,
-        tmstFirmaEnv: "2026-06-12T22:11:10",
-      },
-      pfxBytes: pfx,
-      password: "pass",
-    });
+    await validarContraXsd(envio([
+      buildSignedFacturaDte(f33, pfx, "pass"),
+      buildSignedFacturaDte(f34, pfx, "pass"),
+      buildSignedFacturaDte(nc61, pfx, "pass"),
+      buildSignedFacturaDte(nd56, pfx, "pass"),
+    ], pfx));
+  },
+});
 
-    const xmlPath = await Deno.makeTempFile({ prefix: "ruraldte_envio_", suffix: ".xml" });
-    const xsdPath = new URL("./xsd/EnvioDTE_v10.xsd", import.meta.url).pathname;
-    try {
-      await Deno.writeFile(xmlPath, toLatin1(xml));
-      const { code, stderr } = await new Deno.Command("xmllint", {
-        args: ["--noout", "--schema", xsdPath, xmlPath],
-        stdout: "null",
-        stderr: "piped",
-      }).output();
-      const err = new TextDecoder().decode(stderr);
-      assert(code === 0, `xmllint reprobó el EnvioDTE contra el XSD v2.5:\n${err}`);
-    } finally {
-      await Deno.remove(xmlPath).catch(() => {});
-    }
+// Un % de descuento/recargo sobre una línea en pesos deja un delta fraccionario (10% de 999 = 99,9).
+// En la familia comercial el <MontoItem> es MontoType (xs:nonNegativeInteger): la línea sale en pesos
+// enteros aunque el delta crudo no lo sea. Antes el motor la mandaba a la rama decimal de
+// Exportaciones —MontoItem 1098.9 / 1348.5— y el SII la rechazaba con el folio ya consumido.
+Deno.test({
+  name: "familia comercial (33): descuento/recargo % de monto fraccionario → Detalle en pesos enteros, valida contra el XSD",
+  ignore: !HAS_XMLLINT,
+  fn: async () => {
+    const pfx = makeTestPfx();
+    const f33: FacturaDteInput = {
+      ...afecta(102),
+      items: [
+        { nombre: "Servicio con recargo", cantidad: 1, precio: 999, recargoPct: 10 },
+        { nombre: "Producto a granel con descuento", cantidad: 1.5, precio: 999, descuentoPct: 10 },
+      ],
+      // 999 + round(99,9) = 1099 · round(1498,5) − round(149,9) = 1499 − 150 = 1349 → neto 2448
+      totals: { neto: 2448, iva: 465, exento: 0, total: 2913 },
+      documentId: "F33T102",
+    };
+    const signed = buildSignedFacturaDte(f33, pfx, "pass");
+    // El DTE firmado sale con un elemento por línea (CRLF): se aplana para leer cada <Detalle> de corrido.
+    const plano = signed.replace(/\r?\n/g, "");
+    assertStringIncludes(plano, "<RecargoPct>10</RecargoPct><RecargoMonto>100</RecargoMonto><MontoItem>1099</MontoItem>");
+    assertStringIncludes(plano, "<DescuentoPct>10</DescuentoPct><DescuentoMonto>150</DescuentoMonto><MontoItem>1349</MontoItem>");
+    await validarContraXsd(envio([signed], pfx));
+  },
+});
+
+// La contracara: el subtipo Exportaciones SÍ admite decimales en el MontoItem (xs:decimal/4). El set
+// de cert los ejerce —4907377-1: 94 YEN + 10% de recargo en la línea = 103.4, sin <RecargoMonto>
+// porque 9.4 no es MntImpType— y eso tiene que seguir saliendo igual y válido.
+Deno.test({
+  name: "subtipo Exportaciones (set de cert): el recargo % fraccionario queda en un MontoItem decimal y valida contra el XSD",
+  ignore: !HAS_XMLLINT,
+  fn: async () => {
+    const pfx = makeTestPfx();
+    const dtes = buildCertFacturaDtes({
+      cases: EXPORT_CERT_CASES,
+      emisor: {
+        rut: EMISOR.rut,
+        legalName: EMISOR.razonSocial,
+        giro: EMISOR.giro,
+        acteco: EMISOR.acteco,
+        dirOrigen: EMISOR.dirOrigen,
+        cmnaOrigen: EMISOR.cmnaOrigen,
+      },
+      receptor: DEFAULT_FACTURA_CERT_RECEPTOR,
+      firstFolioByType: { 110: 1, 111: 1, 112: 1 },
+      cafByType: { 110: genCafXml(110), 111: genCafXml(111), 112: genCafXml(112) },
+      fechaEmision: "2026-06-12",
+      tstedIso: "2026-06-12T09:33:20",
+    }, pfx, "pass");
+    const recargo = dtes.find((d) => d.caso === "4907377-1");
+    assert(recargo, "el set de exportación debe traer el caso 4907377-1");
+    assertStringIncludes(
+      recargo.signedDte.replace(/\r?\n/g, ""),
+      "<PrcItem>94</PrcItem><RecargoPct>10</RecargoPct><MontoItem>103.4</MontoItem>",
+    );
+    await validarContraXsd(envio(dtes.map((d) => d.signedDte), pfx));
   },
 });

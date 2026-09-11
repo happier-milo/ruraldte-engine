@@ -258,6 +258,16 @@ function buildEncabezado(input: BoletaDteInput): string {
   return `<Encabezado>${idDoc}${emisorXml}${receptorXml}${totalesXml}</Encabezado>`;
 }
 
+/**
+ * `MontoItem` de una línea de boleta: `round(precio × cantidad)`. La boleta no lleva descuentos
+ * ni recargos de línea, así que su cuenta NO es la de la factura (`montosDeLinea`). Es la ÚNICA
+ * implementación: `buildDetalle` emite desde acá y la representación impresa la importa en vez
+ * de replicarla.
+ */
+export function montoItemBoleta(item: Pick<BoletaDteItem, "precio" | "cantidad">): number {
+  return Math.round(item.precio * item.cantidad);
+}
+
 function buildDetalle(item: BoletaDteItem, nroLinea: number): string {
   const parts: string[] = [];
   parts.push(el("NroLinDet", nroLinea));
@@ -266,7 +276,7 @@ function buildDetalle(item: BoletaDteItem, nroLinea: number): string {
   parts.push(el("QtyItem", item.cantidad));
   parts.push(el("UnmdItem", item.unidadMedida ?? "un"));
   parts.push(el("PrcItem", Math.round(item.precio)));
-  parts.push(el("MontoItem", Math.round(item.precio * item.cantidad)));
+  parts.push(el("MontoItem", montoItemBoleta(item)));
   return `<Detalle>${parts.join("")}</Detalle>`;
 }
 

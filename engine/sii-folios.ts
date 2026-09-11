@@ -755,15 +755,34 @@ export async function consultarFoliosViaRuralDte(args: {
           target.maxTimbrar = Number.isFinite(max) ? max : null;
           target.foliosSinUsar = Number.isFinite(disp) ? disp : null;
         }
-      } catch {
+      } catch (err) {
         if (target) {
           target.maxTimbrar = null;
           target.foliosSinUsar = null;
         }
+        // Los null son un resultado legítimo (el SII no expuso los cupos), pero sin
+        // dejar el motivo NO se distingue "no los expuso" de "se cayó la página".
+        // Queda en el trace, que es justo lo que esta función devuelve para diagnosticar.
+        session.trace.push({
+          step: `solicita_doc_${documentType}_error`,
+          status: 0,
+          url: session.abs("/cvc_cgi/dte/of_solicita_folios_dcto"),
+          body: err instanceof Error ? err.message : String(err),
+        });
       }
       if (i < args.documentTypes.length - 1) await sleep(1500); // espaciar (gentil con el SII)
     }
-  } catch { /* best-effort: la consulta ya quedó en results */ }
+  } catch (err) {
+    // Best-effort de verdad: los `results` ya están y se devuelven igual. Pero el
+    // motivo va al trace en vez de desaparecer — un cupo que llega en null sin
+    // explicación manda a buscar el problema al lado equivocado.
+    session.trace.push({
+      step: "solicita_cupos_error",
+      status: 0,
+      url: session.abs("/cvc_cgi/dte/of_solicita_folios"),
+      body: err instanceof Error ? err.message : String(err),
+    });
+  }
 
   return { results, trace: session.trace };
 }

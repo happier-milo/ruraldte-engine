@@ -13,7 +13,9 @@ import forge from "npm:node-forge@1.3.1";
 import {
   buildFacturaDocumento,
   type FacturaDteInput,
+  type FacturaDteItem,
   buildSignedFacturaDte,
+  montosDeLinea,
 } from "./factura-dte.ts";
 import { buildEnvioDte } from "./envio-dte.ts";
 import { canonicalize, parseXml } from "./c14n.ts";
@@ -351,6 +353,61 @@ Deno.test("factura de compra 46: TpoTranCompra en IdDoc + ImptoReten en Totales 
     `<IVA>19000</IVA><ImptoReten><TipoImp>15</TipoImp><TasaImp>19</TasaImp>` +
       `<MontoImp>19000</MontoImp></ImptoReten><MntTotal>119000</MntTotal>`,
   );
+});
+
+// La representación impresa importa `montosDeLinea` en vez de replicar la cuenta. Esto amarra que lo
+// que devuelve sea EXACTAMENTE lo que el builder escribe en el <Detalle>, rama por rama y en los dos
+// subtipos, y fija los valores para que un cambio en la cuenta no pase callado por las dos rutas a la
+// vez. `en33` = familia comercial (MontoItem entero); `en110` = subtipo Exportaciones (decimal/4).
+Deno.test("montosDeLinea = lo que escribe el <Detalle> (MontoItem y DescuentoMonto), en todas las ramas y los dos subtipos", () => {
+  const casos: Array<{ item: FacturaDteItem; en33: number; en110: number; descuentoMonto?: number }> = [
+    // Pesos enteros: descuento % (set CASO 2), descuento $, recargo %, descuento y recargo $.
+    { item: { nombre: "A", cantidad: 777, precio: 6014, descuentoPct: 10 }, en33: 4205590, en110: 4205590, descuentoMonto: 467288 },
+    { item: { nombre: "B", cantidad: 3, precio: 1000, descuentoMonto: 250 }, en33: 2750, en110: 2750, descuentoMonto: 250 },
+    { item: { nombre: "C", cantidad: 3, precio: 1000, recargoPct: 15 }, en33: 3450, en110: 3450 },
+    { item: { nombre: "D", cantidad: 1000, precio: 50, descuentoMonto: 100, recargoMonto: 50 }, en33: 49950, en110: 49950, descuentoMonto: 100 },
+    // Precio decimal: el PrcItem lo conserva en los dos subtipos; el MontoItem, solo en Exportaciones.
+    { item: { nombre: "E", cantidad: 2, precio: 12.345678 }, en33: 25, en110: 24.6914 },
+    // Recargo % fraccionario (cert 4907377-1, exportación): en 110 va solo RecargoPct y el MontoItem lo
+    // absorbe con decimales; en 33 el recargo se redondea a pesos sobre el bruto.
+    { item: { nombre: "F", cantidad: 1, precio: 1, recargoPct: 10 }, en33: 1, en110: 1.1 },
+    { item: { nombre: "G", cantidad: 1, precio: 94, recargoPct: 10 }, en33: 103, en110: 103.4 },
+    { item: { nombre: "H", cantidad: 1, precio: 999, recargoPct: 10 }, en33: 1099, en110: 1098.9 },
+    // Descuento % fraccionario: el DescuentoMonto va entero en los dos (MntImpType); el bruto no.
+    { item: { nombre: "I", cantidad: 1.5, precio: 999, descuentoPct: 10 }, en33: 1349, en110: 1348.5, descuentoMonto: 150 },
+    { item: { nombre: "J", cantidad: 1036, precio: 194, descuentoPct: 5, exento: true }, en33: 190935, en110: 190935, descuentoMonto: 10049 },
+    // MontoItem explícito (liquidación-factura 43): sin PrcItem, admite negativo, se redondea.
+    { item: { nombre: "K", cantidad: 129, precio: 0, montoItem: 69180, tpoDocLiq: 33 }, en33: 69180, en110: 69180 },
+    { item: { nombre: "L", cantidad: 1, precio: 0, montoItem: -52428.4, tpoDocLiq: 33 }, en33: -52428, en110: -52428 },
+    // Línea sin valor (guía 52, traslado interno).
+    { item: { nombre: "M", cantidad: 3, precio: 0, sinValor: true }, en33: 0, en110: 0 },
+  ];
+  for (const tipoDte of [33, 110] as const) {
+    const input: FacturaDteInput = { ...facturaAfecta(7), tipoDte, cafXml: genCafXml(tipoDte), items: casos.map((c) => c.item) };
+    const { documento } = buildFacturaDocumento(input);
+    const detalles = documento.match(/<Detalle>[\s\S]*?<\/Detalle>/g) ?? [];
+    assertEquals(detalles.length, casos.length);
+    casos.forEach((c, i) => {
+      const linea = `${tipoDte} línea ${c.item.nombre}`;
+      const m = montosDeLinea(c.item, tipoDte);
+      const xmlMonto = Number(detalles[i].match(/<MontoItem>([^<]+)<\/MontoItem>/)?.[1]);
+      const xmlDesc = detalles[i].match(/<DescuentoMonto>([^<]+)<\/DescuentoMonto>/)?.[1];
+      const desc = m.rama === "precio" ? m.descuentoMonto : undefined;
+      assertEquals(xmlMonto, m.montoItem, `${linea}: <MontoItem> vs montosDeLinea`);
+      assertEquals(m.montoItem, tipoDte === 33 ? c.en33 : c.en110, `${linea}: MontoItem fijado`);
+      assertEquals(xmlDesc === undefined ? undefined : Number(xmlDesc), desc, `${linea}: <DescuentoMonto>`);
+      assertEquals(desc, c.descuentoMonto, `${linea}: DescuentoMonto fijado`);
+    });
+  }
+});
+
+// Un DescuentoMonto/RecargoMonto explícito ya viene en pesos: con decimales, en la familia comercial no
+// hay cómo escribirlo (MntImpType y MontoType son enteros), y redondearlo callado dejaría el Detalle
+// distinto de los Totales que el llamador calculó con ese mismo monto. En Exportaciones sí tiene cómo.
+Deno.test("montosDeLinea: DescuentoMonto/RecargoMonto explícito con decimales se rechaza en la familia comercial", () => {
+  assertThrows(() => montosDeLinea({ cantidad: 1, precio: 1000, descuentoMonto: 150.5 }, 33), Error, "descuentoMonto=150.5");
+  assertThrows(() => montosDeLinea({ cantidad: 1, precio: 1000, recargoMonto: 0.4 }, 61), Error, "recargoMonto=0.4");
+  assertEquals(montosDeLinea({ cantidad: 1, precio: 1, recargoPct: 10, recargoMonto: 0.1 }, 110).montoItem, 1.1);
 });
 
 Deno.test("descuento por línea (set CASO 2): DescuentoPct+DescuentoMonto tras PrcItem, antes de MontoItem", () => {

@@ -117,8 +117,9 @@ function fmtDec6(n: number): string {
 
 /**
  * Una línea del `<Detalle>`: qué se vende, en qué cantidad y a qué precio unitario neto.
- * El builder calcula `MontoItem` = `round(precio × cantidad) − descuentoMonto + recargoMonto`
- * (a 4 decimales si alguno de esos valores no es entero, el caso de exportación) y, si el precio
+ * El builder calcula `MontoItem` (con `montosDeLinea`) = `round(precio × cantidad) − descuentoMonto + recargoMonto`
+ * (en pesos enteros; a 4 decimales solo en el subtipo Exportaciones, si alguno de esos valores no es
+ * entero) y, si el precio
  * queda en 0, omite `QtyItem`/`UnmdItem`/`PrcItem` porque Dec12_6 no admite 0. Pasar `montoItem`
  * no es un override cualquiera: manda la línea por la rama de liquidación-factura (43), que emite
  * `QtyItem` + `UnmdItem` sin `PrcItem` y no escribe descuentos, recargos ni `Retenedor`.
@@ -164,8 +165,9 @@ export type FacturaDteItem = {
    * DescuentoPct/DescuentoMonto y antes de CodImpAdic/MontoItem (orden XSD).
    * ⚠️ RecargoMonto (campo par) es MntImpType=xs:positiveInteger en TODOS los subtipos → SOLO admite
    * enteros >0 (ni 0 ni 0.1). El builder emite RecargoMonto SOLO si el monto calculado es entero
-   * positivo; si es fraccionario (ej. export 10% de 1 USD = 0.1) emite SOLO <RecargoPct> y omite
-   * <RecargoMonto>, reflejando el recargo en MontoItem (decimal/4 en el subtipo Exportaciones).
+   * positivo. En la familia comercial el % se redondea a pesos sobre el bruto, así que siempre lo es
+   * (o es 0); solo en el subtipo Exportaciones puede quedar fraccionario (ej. 10% de 1 USD = 0.1), y
+   * entonces emite SOLO <RecargoPct> y omite <RecargoMonto>, reflejando el recargo en MontoItem (decimal/4).
    * El % se computa sobre grossItem (Qty×Prc). Caso 4903532-1 del set: PrcItem=1 + RecargoPct=10 →
    * MontoItem=1.1 (recargo "EN LA LÍNEA DE ITEM", no global ni plegado en el precio).
    */
@@ -737,7 +739,125 @@ function buildTransporte(t: FacturaTransporte): string {
   return parts.length > 0 ? `<Transporte>${parts.join("")}</Transporte>` : "";
 }
 
-function buildDetalle(item: FacturaDteItem, nroLinea: number): string {
+/**
+ * Montos que el `<Detalle>` escribe para una línea de la familia factura (todo menos boleta).
+ * Es la ÚNICA implementación de la cuenta: `buildDetalle` emite el XML desde acá, y quien
+ * muestre el valor de una línea fuera del XML (la representación impresa) la importa en vez de
+ * replicarla. Una réplica que solo cubre pesos enteros imprime otro número apenas la línea cae
+ * en otra rama, y el papel contradice al documento tributario que lo respalda.
+ *
+ * Mismas ramas y misma precedencia que el builder:
+ *   · `sinValor` (guía 52, traslado interno) → MontoItem 0, sin PrcItem.
+ *   · `montoExplicito` (liquidación-factura 43) → MontoItem = round(montoItem), sin PrcItem ni
+ *     descuentos/recargos (el builder no los escribe en esa rama).
+ *   · `precio` → MontoItem = bruto − DescuentoMonto + RecargoMonto. En pesos enteros, salvo en el
+ *     subtipo Exportaciones (`decimal`, a 4 decimales): lo decide el TIPO del documento, no los
+ *     valores de la línea (por qué, en el cuerpo de `montosDeLinea`).
+ */
+export type MontosDeLinea =
+  | { rama: "sinValor"; montoItem: 0 }
+  | { rama: "montoExplicito"; montoItem: number }
+  | {
+    rama: "precio";
+    /** true = los montos conservan decimales (round4): solo en el subtipo Exportaciones y solo si
+     *  algún valor de la línea es fraccionario. false = pesos enteros. */
+    decimal: boolean;
+    /** `<PrcItem>`: Dec12_6 en los dos subtipos, así que un precio fraccionario conserva sus
+     *  decimales (a 4) sea cual sea el tipo. El builder lo omite (junto con QtyItem/UnmdItem) si no es > 0. */
+    prcItem: number;
+    /** `<DescuentoMonto>`; ausente = la línea no lleva descuento. */
+    descuentoMonto?: number;
+    /** Recargo que entra al MontoItem; ausente = sin recargo. El XML solo escribe
+     *  `<RecargoMonto>` si es entero > 0 (positiveInteger); si no, queda reflejado en el MontoItem. */
+    recargoMonto?: number;
+    /** `<MontoItem>` tal como sale en el XML. */
+    montoItem: number;
+  };
+
+/** Campos de la línea que mueven la cuenta; nombre, códigos y flags no la tocan. */
+export type LineaMontos = Pick<
+  FacturaDteItem,
+  "cantidad" | "precio" | "sinValor" | "montoItem" | "descuentoPct" | "descuentoMonto" | "recargoPct" | "recargoMonto"
+>;
+
+/** El tipo se emite como subtipo `<Exportaciones>` del XSD (el resto de la familia es `<Documento>`,
+ *  salvo el 43, `<Liquidacion>`). Decide la raíz del documento Y si los montos de línea admiten decimales. */
+function esExportaciones(tipoDte: FacturaDteType): boolean {
+  return tipoDte === 110 || tipoDte === 111 || tipoDte === 112;
+}
+
+export function montosDeLinea(item: LineaMontos, tipoDte: FacturaDteType): MontosDeLinea {
+  if (item.sinValor) return { rama: "sinValor", montoItem: 0 };
+  if (item.montoItem !== undefined) {
+    return { rama: "montoExplicito", montoItem: Math.round(item.montoItem) };
+  }
+  // round4 evita arrastre de float64 en todo lo que conserva decimales.
+  const round4 = (x: number) => Math.round(x * 1e4) / 1e4;
+  // PrcItem es Dec12_6 en los DOS subtipos (Documento y Exportaciones): un precio fraccionario se
+  // conserva sea cual sea el tipo, y un precio entero sale tal cual.
+  const prcItem = Number.isInteger(item.precio) ? item.precio : round4(item.precio);
+  // Los MONTOS de la línea son otra cosa, y los decide el TIPO del documento, no los valores:
+  //   · Familia comercial (<Documento>: 33/34/46/52/56/61): MontoItem es MontoType =
+  //     xs:nonNegativeInteger → la línea va SIEMPRE en pesos enteros. Si el bruto o el % de un
+  //     descuento/recargo deja un monto fraccionario (10% de 999 = 99,9), se redondea (Math.round)
+  //     sobre el bruto. Antes esto se decidía mirando los valores: una línea así caía en la rama
+  //     decimal y salía MontoItem 1098.9 → XSD inválido, rechazo del SII con el folio ya consumido.
+  //   · Subtipo Exportaciones (110/111/112): MontoItem es xs:decimal/4 → la línea conserva decimales
+  //     (round4) cuando el precio o el delta de un descuento/recargo no es entero (cert 4907377-1:
+  //     94 + 10% de recargo = 103.4). Con valores enteros sale igual que en la familia comercial.
+  const exportaciones = esExportaciones(tipoDte);
+  const recDeltaRaw = item.recargoPct !== undefined
+    ? (item.recargoMonto ?? item.precio * item.cantidad * item.recargoPct / 100)
+    : (item.recargoMonto ?? 0);
+  const descDeltaRaw = item.descuentoPct !== undefined
+    ? (item.descuentoMonto ?? item.precio * item.cantidad * item.descuentoPct / 100)
+    : (item.descuentoMonto ?? 0);
+  const decimal = exportaciones &&
+    (!Number.isInteger(item.precio) || !Number.isInteger(recDeltaRaw) || !Number.isInteger(descDeltaRaw));
+  // Un DescuentoMonto/RecargoMonto EXPLÍCITO ya viene en pesos: si trae decimales en la familia
+  // comercial no hay forma válida de escribirlo (MntImpType y MontoType son enteros), y redondearlo
+  // callado dejaría el Detalle distinto de los Totales que el llamador calculó con ese mismo monto.
+  if (!exportaciones) {
+    for (const [campo, monto] of [["descuentoMonto", item.descuentoMonto], ["recargoMonto", item.recargoMonto]] as const) {
+      if (monto !== undefined && !Number.isInteger(monto)) {
+        throw new Error(
+          `montosDeLinea: ${campo}=${monto} no es un entero; en el tipo ${tipoDte} los montos de línea van en pesos enteros`,
+        );
+      }
+    }
+  }
+  const redondear = decimal ? round4 : Math.round;
+  // MontoItem = NETO de la línea = Qty × Prc − DescuentoMonto (+ RecargoMonto). El
+  // SII valida MontoItem == Qty×Prc − DescuentoMonto + RecargoMonto: emitir el BRUTO da el reparo
+  // "Valor Detalle Distinto a Precio * Cantidad" (RVD T33 folio 2, cert 2026-06-14).
+  // DescuentoMonto se calcula sobre el BRUTO (Qty×Prc), y MontoItem ya sale neto.
+  const grossItem = redondear(item.precio * item.cantidad);
+  let descuentoMonto: number | undefined;
+  if (item.descuentoPct !== undefined) {
+    descuentoMonto = item.descuentoMonto ?? Math.round(grossItem * item.descuentoPct / 100);
+  } else if (item.descuentoMonto !== undefined) {
+    descuentoMonto = item.descuentoMonto;
+  }
+  // El % de recargo va sobre el bruto y, en la rama decimal, conserva decimales: por qué un recargo
+  // fraccionario no llega a <RecargoMonto> está en el bloque RecargoPct/RecargoMonto de buildDetalle.
+  let recargoMonto: number | undefined;
+  if (item.recargoPct !== undefined) {
+    recargoMonto = item.recargoMonto ?? redondear(grossItem * item.recargoPct / 100);
+  } else if (item.recargoMonto !== undefined) {
+    recargoMonto = item.recargoMonto;
+  }
+  const montoItem = grossItem - (descuentoMonto ?? 0) + (recargoMonto ?? 0);
+  return {
+    rama: "precio",
+    decimal,
+    prcItem,
+    descuentoMonto,
+    recargoMonto,
+    montoItem: decimal ? round4(montoItem) : montoItem,
+  };
+}
+
+function buildDetalle(item: FacturaDteItem, nroLinea: number, tipoDte: FacturaDteType): string {
   // Orden XSD: NroLinDet, [CdgItem], [IndExe], [Retenedor], NmbItem, [DscItem], QtyItem,
   // [UnmdItem], PrcItem, [DescuentoPct], [DescuentoMonto], [RecargoPct], [RecargoMonto],
   // [CodImpAdic], MontoItem.
@@ -754,15 +874,17 @@ function buildDetalle(item: FacturaDteItem, nroLinea: number): string {
       }</CdgItem>`,
     );
   }
+  // Montos de la línea: UNA sola cuenta (montosDeLinea), la misma que importa la representación impresa.
+  const montos = montosDeLinea(item, tipoDte);
   // Línea SIN valor (guía 52 traslado interno): NmbItem + QtyItem + UnmdItem + MontoItem=0,
   // sin IndExe ni PrcItem. El traslado interno no constituye venta → MontoItem=0 con QtyItem
   // es válido y aceptado por el SII (XML real guía IndTraslado=5).
-  if (item.sinValor) {
+  if (montos.rama === "sinValor") {
     parts.push(el("NmbItem", item.nombre.slice(0, 80)));
     if (item.descripcion) parts.push(el("DscItem", item.descripcion.slice(0, 1000)));
     parts.push(el("QtyItem", item.cantidad));
     if (item.unidadMedida) parts.push(el("UnmdItem", item.unidadMedida.slice(0, 4)));
-    parts.push(el("MontoItem", 0));
+    parts.push(el("MontoItem", montos.montoItem));
     return `<Detalle>${parts.join("")}</Detalle>`;
   }
   // Línea de Liquidación-Factura (43) total-driven: la línea es un AGREGADO ("CANTIDAD n / TOTAL m"
@@ -775,7 +897,7 @@ function buildDetalle(item: FacturaDteItem, nroLinea: number): string {
   // ejemplo no lo lleva; sin PrcItem el validador toma MontoItem directo, sin recomputar Qty×Prc).
   // MontoItem es ValorType → admite negativos (NC/devolución/liquidación dentro de la liquidación).
   // QtyItem por defecto = 1 si no se pasa cantidad.
-  if (item.montoItem !== undefined) {
+  if (montos.rama === "montoExplicito") {
     // TpoDocLiq (obligatorio en Liquidacion/Detalle): tras NroLinDet/CdgItem, antes de IndExe.
     if (item.tpoDocLiq !== undefined) parts.push(el("TpoDocLiq", item.tpoDocLiq));
     // IndExe en líneas de Liquidación-Factura: EXENTO (línea "EXENTO …" del set) → IndExe=1 (suma a
@@ -795,7 +917,7 @@ function buildDetalle(item: FacturaDteItem, nroLinea: number): string {
     // No Cuadran": -2 líneas 5-7, -4 líneas 6-8) — el SII espera la CANTIDAD en cada línea.
     parts.push(el("QtyItem", item.cantidad && item.cantidad > 0 ? item.cantidad : 1));
     parts.push(el("UnmdItem", (item.unidadMedida ?? "UN").slice(0, 4)));
-    parts.push(el("MontoItem", Math.round(item.montoItem)));
+    parts.push(el("MontoItem", montos.montoItem));
     return `<Detalle>${parts.join("")}</Detalle>`;
   }
   if (item.exento) parts.push(el("IndExe", 1));
@@ -808,44 +930,19 @@ function buildDetalle(item: FacturaDteItem, nroLinea: number): string {
   // "anula NC") se OMITEN los tres y la línea queda solo con NmbItem + MontoItem=0.
   // Emitir QtyItem sin PrcItem da el reparo SII "Los Valores de la Línea N del
   // Detalle No Cuadran" (SETMAIL set básico/exenta, cert 2026-06-15).
-  // Subtipo Exportaciones: PrcItem (Dec12_6 decimal/6) y MontoItem (xs:decimal totalDigits18/
-  // fractionDigits4) ADMITEN decimales — la familia comercial (33/34/46/52/56/61) exige
-  // MontoType=nonNegativeInteger, así que sólo se preservan decimales en líneas con valores
-  // fraccionarios. Hay dos fuentes de decimal: (a) el PrecioUnitario NO es entero (export con precio
-  // fraccionario), o (b) un RecargoPct/DescuentoPct deja un MONTO fraccionario sobre un precio entero
-  // (caso 4903532-1: 10% de 1 USD = 0.1 → MontoItem=1.1). En ambos casos el MontoItem/grossItem debe
-  // conservar decimales (round4) en vez de redondearse a entero. round4 evita arrastre de float64.
-  const recDeltaRaw = item.recargoPct !== undefined
-    ? (item.recargoMonto ?? item.precio * item.cantidad * item.recargoPct / 100)
-    : (item.recargoMonto ?? 0);
-  const descDeltaRaw = item.descuentoPct !== undefined
-    ? (item.descuentoMonto ?? item.precio * item.cantidad * item.descuentoPct / 100)
-    : (item.descuentoMonto ?? 0);
-  const isDecimalPrice = !Number.isInteger(item.precio) ||
-    !Number.isInteger(recDeltaRaw) || !Number.isInteger(descDeltaRaw);
-  const round4 = (x: number) => Math.round(x * 1e4) / 1e4;
-  const prcItem = isDecimalPrice ? round4(item.precio) : Math.round(item.precio);
-  if (prcItem > 0) {
+  // PrcItem (Dec12_6 en los dos subtipos) puede traer decimales; el MontoItem, solo en el subtipo
+  // Exportaciones (`montos.decimal`). Por qué y cuándo, en montosDeLinea.
+  if (montos.prcItem > 0) {
     parts.push(el("QtyItem", item.cantidad));
     if (item.unidadMedida) parts.push(el("UnmdItem", item.unidadMedida.slice(0, 4)));
-    // PrcItem decimal (export) → Dec12_6 hasta 6 decimales sin ceros finales; entero (familia) → tal cual.
-    parts.push(el("PrcItem", isDecimalPrice ? fmtDec6(prcItem) : prcItem));
+    // PrcItem fraccionario → Dec12_6 hasta 6 decimales sin ceros finales; entero → tal cual.
+    parts.push(el("PrcItem", Number.isInteger(montos.prcItem) ? montos.prcItem : fmtDec6(montos.prcItem)));
   }
-  // MontoItem = NETO de la línea = Qty × Prc − DescuentoMonto (+ RecargoMonto). El
-  // SII valida MontoItem == Qty×Prc − DescuentoMonto + RecargoMonto: emitir el BRUTO da el reparo
-  // "Valor Detalle Distinto a Precio * Cantidad" (RVD T33 folio 2, cert 2026-06-14).
-  // DescuentoPct/DescuentoMonto documentan el descuento de línea; DescuentoMonto se
-  // calcula sobre el BRUTO (Qty×Prc), y MontoItem ya sale neto. En export el bruto conserva
-  // decimales (round4); en la familia comercial es entero (Math.round).
-  const grossItem = isDecimalPrice ? round4(item.precio * item.cantidad) : Math.round(item.precio * item.cantidad);
-  let descMonto = 0;
-  if (item.descuentoPct !== undefined) {
-    descMonto = item.descuentoMonto ?? Math.round(grossItem * item.descuentoPct / 100);
-    parts.push(el("DescuentoPct", item.descuentoPct));
-    parts.push(el("DescuentoMonto", descMonto));
-  } else if (item.descuentoMonto !== undefined) {
-    descMonto = item.descuentoMonto;
-    parts.push(el("DescuentoMonto", descMonto));
+  // DescuentoPct/DescuentoMonto documentan el descuento de línea; el MontoItem ya sale NETO de él
+  // (el SII valida MontoItem == Qty×Prc − DescuentoMonto + RecargoMonto — ver montosDeLinea).
+  if (montos.descuentoMonto !== undefined) {
+    if (item.descuentoPct !== undefined) parts.push(el("DescuentoPct", item.descuentoPct));
+    parts.push(el("DescuentoMonto", montos.descuentoMonto));
   }
   // RecargoPct/RecargoMonto: tras DescuentoPct/DescuentoMonto, antes de CodImpAdic/MontoItem
   // (orden XSD: DescuentoPct, DescuentoMonto, RecargoPct, RecargoMonto, CodImpAdic, MontoItem).
@@ -862,25 +959,23 @@ function buildDetalle(item: FacturaDteItem, nroLinea: number): string {
   // NO como DscRcgGlobal (daba "Debe Tener 0 Línea(s) de Recargo Global" — el set lo pide "EN LA LÍNEA
   // DE ITEM"). Si el monto del recargo ES entero (familia comercial o export con monto entero), se
   // emite el par RecargoPct + RecargoMonto como antes.
-  let recMonto = 0;
-  if (item.recargoPct !== undefined) {
-    const recRaw = item.recargoMonto ??
-      (isDecimalPrice ? round4(grossItem * item.recargoPct / 100) : Math.round(grossItem * item.recargoPct / 100));
-    recMonto = recRaw;
-    parts.push(el("RecargoPct", item.recargoPct));
-    // RecargoMonto solo si es entero positivo (MntImpType=positiveInteger). Fraccionario o 0 → omitir;
-    // el recargo queda expresado por RecargoPct y reflejado en MontoItem (que en export es decimal).
-    if (Number.isInteger(recRaw) && recRaw > 0) parts.push(el("RecargoMonto", recRaw));
-  } else if (item.recargoMonto !== undefined) {
-    recMonto = item.recargoMonto;
-    parts.push(el("RecargoMonto", recMonto));
+  if (montos.recargoMonto !== undefined) {
+    if (item.recargoPct !== undefined) {
+      parts.push(el("RecargoPct", item.recargoPct));
+      // RecargoMonto solo si es entero positivo (MntImpType=positiveInteger). Fraccionario o 0 → omitir;
+      // el recargo queda expresado por RecargoPct y reflejado en MontoItem (que en export es decimal).
+      if (Number.isInteger(montos.recargoMonto) && montos.recargoMonto > 0) {
+        parts.push(el("RecargoMonto", montos.recargoMonto));
+      }
+    } else {
+      parts.push(el("RecargoMonto", montos.recargoMonto));
+    }
   }
   // CodImpAdic: tras descuentos/recargos, justo antes de MontoItem (DTE_v10.xsd L1649).
   // Ancla la retención/impuesto adicional a la línea (la base es el MontoItem).
   if (item.codImpAdic !== undefined) parts.push(el("CodImpAdic", item.codImpAdic));
   // MontoItem export decimal (round4) o familia entero. el() preserva el decimal de round4.
-  const montoItem = grossItem - descMonto + recMonto;
-  parts.push(el("MontoItem", isDecimalPrice ? round4(montoItem) : montoItem));
+  parts.push(el("MontoItem", montos.montoItem));
   return `<Detalle>${parts.join("")}</Detalle>`;
 }
 
@@ -983,7 +1078,7 @@ export function buildFacturaDocumento(input: FacturaDteInput): BuildFacturaDocum
   // (ambos leen input.receptor.rut) quedan idénticos y canónicos.
   input = { ...input, receptor: { ...input.receptor, rut: normRut(input.receptor.rut) } };
   const encabezado = buildEncabezado(input);
-  const detalles = input.items.map((it, i) => buildDetalle(it, i + 1)).join("");
+  const detalles = input.items.map((it, i) => buildDetalle(it, i + 1, input.tipoDte)).join("");
   // DscRcgGlobal va entre Detalle y Referencia (orden XSD del Documento).
   const dscRcgGlobal = (input.descuentosGlobales ?? [])
     .map((d, i) => buildDscRcgGlobal(d, i + 1))
@@ -1002,7 +1097,7 @@ export function buildFacturaDocumento(input: FacturaDteInput): BuildFacturaDocum
   // DscRcgGlobal (no está en su schema) → se omite para 43.
   const rootTag = input.tipoDte === 43
     ? "Liquidacion"
-    : (input.tipoDte >= 110 ? "Exportaciones" : "Documento");
+    : (esExportaciones(input.tipoDte) ? "Exportaciones" : "Documento");
   const documento =
     `<${rootTag} ID="${escAttr(input.documentId)}">` +
     encabezado +

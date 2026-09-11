@@ -3,7 +3,12 @@
 
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import forge from "npm:node-forge@1.3.1";
-import { type BoletaDteInput, buildBoletaDocumento, buildSignedBoletaDte } from "./boleta-dte.ts";
+import {
+  type BoletaDteInput,
+  buildBoletaDocumento,
+  buildSignedBoletaDte,
+  montoItemBoleta,
+} from "./boleta-dte.ts";
 import { sha1Base64, verifyForgeSignature } from "./xml-signature.ts";
 
 // CAF de prueba con par RSA generado (buildTed necesita la RSASK para la FRMT).
@@ -20,6 +25,21 @@ function genCafXml(): string {
     `<RSASK>${privPem}</RSASK><RSAPUBK>${pubPem}</RSAPUBK></AUTORIZACION>`
   );
 }
+
+// La representación impresa importa `montoItemBoleta` en vez de replicar la cuenta: esto amarra que
+// sea el <MontoItem> que escribe el <Detalle> de la boleta (y fija los valores).
+Deno.test("montoItemBoleta = el <MontoItem> que escribe el <Detalle> de la boleta", () => {
+  const input = caso1Input();
+  input.items = [
+    { nombre: "A", cantidad: 3, precio: 1190 },
+    { nombre: "B", cantidad: 1.5, precio: 999 },
+    { nombre: "C", cantidad: 0.333, precio: 1000.4, exento: true },
+  ];
+  const { documento } = buildBoletaDocumento(input);
+  const xml = [...documento.matchAll(/<MontoItem>([^<]+)<\/MontoItem>/g)].map((m) => Number(m[1]));
+  assertEquals(xml, input.items.map((it) => montoItemBoleta(it)));
+  assertEquals(xml, [3570, 1499, 333]);
+});
 
 // Inputs del CASO-1 REAL capturado del oráculo de calibración (refDteXml): 2 ítems, total 29800.
 function caso1Input(): BoletaDteInput {
