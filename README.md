@@ -7,8 +7,9 @@ y envía DTE **directo al SII** — sin intermediarios, sin costo por documento.
 [![Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 [![Tests](https://github.com/happier-milo/ruraldte-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/happier-milo/ruraldte-engine/actions/workflows/ci.yml)
 
-Es el mismo motor que corre en producción en [ruraldte.cl](https://ruraldte.cl),
-no una versión recortada.
+Es el mismo motor que corre en producción emitiendo ante el SII de Chile, no una
+versión recortada. Lo mantiene y lo usa **Comunidad Rural**
+([comunidadrural.cl](https://www.comunidadrural.cl)), que emite con él directamente.
 
 > **El SII autoriza al contribuyente, no al software.** Dejó de certificar
 > programas hace años: hoy declaras con qué software vas a emitir y el proceso de
@@ -145,9 +146,10 @@ A propósito. Es una librería, no una plataforma:
 > Explicado con las referencias al código en
 > [**Cómo controla el SII**](https://github.com/happier-milo/ruraldte-engine/blob/main/docs/COMO_CONTROLA_EL_SII.md).
 
-Todo eso vive en el servicio alojado ([ruraldte.cl](https://ruraldte.cl)) y no es
-open source. El motor sí, completo: si prefieres operarlo tú, tienes todo lo que
-se necesita para emitir.
+Nada de eso viene incluido: son las piezas que cada quien resuelve alrededor del
+motor (el servicio alojado que las traía se dio de baja en septiembre de 2026). El
+motor sí está completo: si prefieres operarlo tú, tienes todo lo que se necesita
+para emitir.
 
 ## Certificación ante el SII
 
@@ -193,7 +195,8 @@ Vulnerabilidades: [SECURITY.md](SECURITY.md), nunca en un issue público.
 **RuralDTE Engine** builds, signs and submits Chilean electronic tax documents
 (DTE) straight to the SII — no per-document intermediary, no marginal cost.
 
-It is the same engine running in production at [ruraldte.cl](https://ruraldte.cl),
+It is the same engine running in production against Chile's SII — maintained and used
+by **Comunidad Rural** ([comunidadrural.cl](https://www.comunidadrural.cl)),
 The SII authorizes the **taxpayer**, not the software — it stopped certifying
 programs years ago. What can be said about this engine: a real taxpayer used it to
 pass the SII's full certification process for all 12 document types (invoices,

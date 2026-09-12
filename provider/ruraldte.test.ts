@@ -172,6 +172,11 @@ function emitReq(documentType: number, exenta = false): ProviderEmitRequest {
       }]
       : undefined,
     certification: true,
+    // La carátula del EnvioDTE la pone el EMISOR y el provider la exige: en cert es la
+    // FchResol de la empresa en Maullín (2026-06-14 para este RUT), con NroResol 0. No
+    // hay default — ver el test de abajo, que es por qué no lo hay.
+    resolutionNumber: 0,
+    resolutionDate: "2026-06-14",
   };
 }
 
@@ -670,5 +675,41 @@ Deno.test("emit legacy: el rechazo del SII lleva SU motivo, no la cabecera del R
     assert(!msg.includes("RUTSENDER"), `el motivo no debe quedar sepultado por la cabecera: ${msg}`);
   } finally {
     globalThis.fetch = orig;
+  }
+});
+
+// ============================================================================
+// La resolución de la carátula no se adivina
+// ----------------------------------------------------------------------------
+// Había un default `?? "2014-08-22"` —la Res. Ex. de BOLETA de producción— que
+// convertía un emisor sin `fch_resol` en un DTE rechazado con el folio ya gastado
+// (CRT-3-19 "Fecha/Numero Resolucion Invalido", que solo valida el canal legacy). En
+// certificación la fecha es particular de cada empresa: no hay valor adivinable. Y el
+// default ni era coherente: pegaba NroResol 0 (el de cert) con una fecha de producción.
+// El 2026-09-11, de los emisores de cert de la plataforma solo UNO tenía `fch_resol`.
+// ============================================================================
+
+Deno.test("emit EnvioDTE: sin resolutionDate → ProviderConfigError (antes inventaba 2014-08-22)", async () => {
+  for (const tipo of [33, 61, 46]) {
+    const req = emitReq(tipo);
+    delete req.resolutionDate;
+    await assertRejects(
+      () => new RuralDteProvider().emit(req),
+      ProviderConfigError,
+      "resolutionDate",
+    );
+  }
+});
+
+Deno.test("emit EnvioDTE: la carátula lleva la resolución del emisor, no un default", async () => {
+  const stub = installFetchStub();
+  try {
+    const req = emitReq(33);
+    req.resolutionDate = "2026-06-14";
+    const sobre = (await new RuralDteProvider().emit(req)).xml!;
+    assertStringIncludes(sobre, "<FchResol>2026-06-14</FchResol>");
+    assert(!sobre.includes("2014-08-22"), "se fue con la resolución de producción de boleta");
+  } finally {
+    stub.restore();
   }
 });

@@ -425,6 +425,29 @@ export class RuralDteProvider implements DteProvider {
     }
 
     // Exenta: 34 y exportación siempre exentas; 56/61/guía según exemptIndicator o sin neto.
+    // La carátula del EnvioDTE la valida el canal legacy y una resolución equivocada es
+    // un rechazo garantizado (CRT-3-19 "Fecha/Numero Resolucion Invalido"). Acá había un
+    // default `?? "2014-08-22"` —la Res. Ex. de BOLETA de producción— que convertía un
+    // emisor sin `fch_resol` en un DTE rechazado con el folio ya gastado. En
+    // certificación la fecha es PARTICULAR DE CADA EMPRESA (se saca de Maullín →
+    // "Consultar emisores autorizados"), así que no hay ningún valor que se pueda
+    // adivinar; y el default ni siquiera era coherente, porque pegaba `NroResol 0` (el de
+    // cert) con una fecha de producción.
+    //
+    // No es hipotético: el 2026-09-11, de los emisores de certificación de la plataforma
+    // solo UNO tenía `fch_resol` cargada. Todos los demás mandaban esa carátula
+    // imposible, y uno de ellos era el cliente que estaba certificando.
+    //
+    // Falla acá, antes de tocar el folio, diciendo qué le falta al emisor.
+    const resolutionDate = req.resolutionDate?.trim();
+    if (!resolutionDate) {
+      throw new ProviderConfigError(
+        "RuralDteProvider: la carátula del EnvioDTE requiere resolutionDate (la FchResol " +
+          "del emisor para el ambiente que emite; en certificación es la de la empresa en " +
+          "Maullín, NO la de producción)",
+      );
+    }
+
     const isExenta = tipoDte === 34 || isExport ||
       (req.exemptIndicator ?? 0) === 1 || req.amounts.neto === 0;
     const { fecha, iso } = emitParts(req);
@@ -566,9 +589,10 @@ export class RuralDteProvider implements DteProvider {
           rutEmisor: req.emisor.rut,
           rutEnvia,
           rutReceptor: RUT_RECEPTOR_SII,
-          // Cert: la Res. Ex. del emisor en Maullín (CRT-3-19). Prod: la genérica
-          // Res. Ex. 80/2014 si no se provee una específica.
-          fchResol: req.resolutionDate ?? "2014-08-22",
+          // La resolución la pone el EMISOR (emisores.fch_resol/nro_resol), nunca este
+          // archivo. Ver la validación de arriba: había un default `?? "2014-08-22"` y
+          // convertía un dato faltante en un documento rechazado.
+          fchResol: resolutionDate,
           nroResol: req.resolutionNumber ?? 0,
           tmstFirmaEnv: iso,
         },
