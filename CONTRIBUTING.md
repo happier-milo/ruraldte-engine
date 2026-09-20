@@ -9,9 +9,9 @@ El motor se desarrolla dentro del monorepo privado de RuralDTE (donde también
 viven el API, el panel y la custodia de certificados) y se **exporta** acá con un
 script determinista. En la práctica:
 
-- El árbol de archivos que ves es **generado**: `engine/`, `provider/`,
-  `cert-tools/`, `pdf-service/` salen tal cual del canónico, más las cabeceras
-  SPDX que inyecta el exportador.
+- El árbol de archivos que ves es **generado**: `engine/`, `cert-tools/` y
+  `pdf-service/` salen tal cual del canónico, más las cabeceras SPDX que inyecta
+  el exportador.
 - Un guardián en CI regenera el export y **falla si el árbol público no calza**
   byte a byte. Nada se cuela ni se pierde en la traducción.
 - La historia acá es **append-only**: cada sincronización es un commit nuevo.
@@ -40,8 +40,8 @@ olvidó: `git commit --amend -s` (o `git rebase --signoff HEAD~N`).
 Necesitas [Deno](https://deno.com) 2.x y Node 24 (solo para el servicio de PDF).
 
 ```bash
-deno task check     # typecheck del motor + provider
-deno task test      # 161 tests del motor + 43 del provider
+deno task check     # typecheck del motor
+deno task test      # 169 tests del motor
 cd pdf-service && npm install && npm test   # 85 tests del PDF y del timbre
 ```
 
@@ -91,5 +91,5 @@ interpretación.
   o español, como esté el archivo que tocas.
 - Tuteo chileno. Nada de voseo (`-ás`/`-és`/`-ís`).
 - Commits [Conventional](https://www.conventionalcommits.org):
-  `fix(engine): ...`, `feat(provider): ...`, `docs: ...`.
+  `fix(engine): ...`, `feat(cert-tools): ...`, `docs: ...`.
 - Un comentario explica **por qué**, no qué. El qué ya está en el código.

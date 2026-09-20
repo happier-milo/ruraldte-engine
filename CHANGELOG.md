@@ -3,6 +3,23 @@
 Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) ·
 Versionado [SemVer](https://semver.org/lang/es/).
 
+## [0.5.0] — 2026-09-20
+
+### Quitado
+- **`provider/`** — la fachada `DteProvider` (emit/poll/getXml/getPdf/healthcheck) deja
+  de publicarse. No era una biblioteca genérica: es la capa que usa el emisor que
+  mantiene este motor, con un contrato moldeado por sus necesidades —identificador de
+  emisor propio, contenido extra de la muestra impresa, un canal aparte para la factura
+  de compra— y un ruteo que lee su base de datos. Publicada al lado del motor se leía
+  como "la forma oficial de usar esto", y no lo era. El motor, que es lo que el SII hace
+  igual para todos, no cambió ni una línea.
+
+  **Migración**: el README muestra el camino directo, que es el que la fachada hacía por
+  dentro — `buildSignedFacturaDte` → `buildEnvioDte` → `getLegacyToken` + `legacyUpload`,
+  y `getLegacyEnvioStatus` para el estado. Para boleta (39/41), `buildSignedBoletaDte` →
+  `buildEnvioBoleta` → `authenticate` + `sendEnvio`. Si tenías tu propia fachada sobre
+  `provider/`, apúntala a esas funciones: no hay lógica que reponer, solo el orden.
+
 ## [0.4.2] — 2026-09-09
 
 ### Añadido

@@ -3,7 +3,7 @@
 RuralDTE Engine se distribuye bajo Apache-2.0. Estas son **todas** sus
 dependencias externas, con su licencia. Ninguna es copyleft de contagio.
 
-## Motor y provider (Deno)
+## Motor (Deno)
 
 | Dependencia | Versión | Licencia | Para qué |
 |---|---|---|---|

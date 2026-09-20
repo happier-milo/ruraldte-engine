@@ -13,7 +13,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-archivos=$(find engine provider cert-tools pdf-service/src pdf-service/test \
+archivos=$(find engine cert-tools pdf-service/src pdf-service/test \
   -type f \( -name '*.ts' -o -name '*.mjs' \) | sort)
 n=$(printf '%s' "$archivos" | grep -c . || true)
 [ "$n" -ge 50 ] || { echo "✗ solo $n archivo(s) de código encontrados: el guardián está ciego"; exit 1; }

@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   engine:
-    name: Motor + provider (Deno)
+    name: Motor (Deno)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -48,9 +48,9 @@ jobs:
         run: |
           npm test 2>&1 | tee /tmp/pdf.txt
           n=$(grep -oE '^. pass [0-9]+' /tmp/pdf.txt | grep -oE '[0-9]+')
-          deno_n=$(grep -oE '#[[:space:]]*[0-9]+: [0-9]+ motor' ../README.md | grep -oE '[0-9]+' | head -1)
+          deno_n=$(grep -oE '#[[:space:]]*[0-9]+ tests del motor' ../README.md | grep -oE '[0-9]+' | head -1)
           total=$((deno_n + n))
-          echo "motor+provider: $deno_n · pdf-service: $n · total: $total"
+          echo "motor: $deno_n · pdf-service: $n · total: $total"
           grep -qE "#[[:space:]]*$n: PDF \+ timbre" ../README.md \
             || { echo "el README no dice $n en la línea del pdf-service"; exit 1; }
           grep -qF "$total tests ($deno_n + $n)" ../README.md \

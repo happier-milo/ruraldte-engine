@@ -75,6 +75,7 @@ import {
   type FacturaDteType,
   type FacturaOtraMoneda,
   type FacturaTransporte,
+  montosDeLinea,
 } from "./factura-dte.ts";
 import { buildEnvioDte } from "./envio-dte.ts";
 import {
@@ -281,22 +282,30 @@ export type FacturaCertTotals = {
 };
 
 /**
- * Totales de un caso de factura (precios NETOS): aplica descuento de línea y
- * descuento global a los afectos, calcula IVA sobre el neto resultante. El neto
- * resultante == sum(MontoItem−DescuentoMonto) − DscRcgGlobal (lo que valida el SII).
+ * Totales de un caso de factura (precios NETOS): suma el MONTO DE LÍNEA de cada ítem y aplica el
+ * descuento global a los afectos, calculando IVA sobre el neto resultante. El neto resultante ==
+ * sum(MontoItem) − DscRcgGlobal (lo que valida el SII).
+ *
+ * El monto de línea NO se recalcula acá: sale de `montosDeLinea`, el mismo que escribe el
+ * `<MontoItem>` del XML. Replicarlo a mano es lo que descuadra Detalle↔Totales —y el SII eso lo
+ * repara con el folio ya gastado—; de paso, la réplica ignoraba el recargo de línea.
+ *
+ * `tipoDte` solo decide si los montos llevan decimales (Exportaciones) o van en pesos enteros. Por
+ * defecto 33 porque esta ruta es la de la familia comercial: los casos de exportación traen sus
+ * totales explícitos del set (en moneda extranjera) y ni pasan por acá.
  */
 export function computeFacturaCertTotals(
   items: FacturaCertItem[],
   descuentoGlobalPct?: number,
+  tipoDte: FacturaDteType = 33,
 ): FacturaCertTotals {
   let afectoNeto = 0;
   let exento = 0;
   for (const it of items) {
     if (it.sinValor) continue; // traslado interno sin valor → no aporta al total.
-    const lineGross = Math.round(it.precio * it.cantidad);
-    const lineDesc = it.descuentoPct ? Math.round(lineGross * it.descuentoPct / 100) : 0;
-    if (it.exento) exento += lineGross - lineDesc;
-    else afectoNeto += lineGross - lineDesc;
+    const montoLinea = montosDeLinea(it, tipoDte).montoItem;
+    if (it.exento) exento += montoLinea;
+    else afectoNeto += montoLinea;
   }
   const globalDesc = descuentoGlobalPct ? Math.round(afectoNeto * descuentoGlobalPct / 100) : 0;
   const neto = afectoNeto - globalDesc;
@@ -483,7 +492,7 @@ export function buildCertFacturaDtes(
       ? computeLiquidacionCertTotals(items, c.comisiones)
       : isExport && c.exportacion
       ? { neto: 0, iva: 0, exento: c.exportacion.exento, total: c.exportacion.total }
-      : computeFacturaCertTotals(items, c.descuentoGlobalPct);
+      : computeFacturaCertTotals(items, c.descuentoGlobalPct, tipo);
     const isExenta = tipo === 34 || isExport || (items.every((it) => it.exento) && totals.neto === 0);
 
     // Referencias: (1) SET (set de pruebas) — se OMITE en simulación/producción (omitSetReference);
@@ -794,16 +803,16 @@ export function buildCertFacturaMuestras(
       ...(it.montoItem !== undefined ? { valor: it.montoItem } : {}),
     }));
 
-    // Descuento global (monto) para mostrar en Totales: % sobre los afectos
-    // (post descuento de línea) — debe casar con neto = afecto − globalDesc.
+    // Descuento global (monto) para mostrar en Totales: % sobre los afectos (post descuento de
+    // línea) — debe casar con neto = afecto − globalDesc. El monto de línea sale del motor, igual
+    // que en computeFacturaCertTotals: si el papel suma distinto que el XML, la muestra impresa
+    // contradice al documento que la respalda.
     let descuentoGlobal = 0;
     if (c.descuentoGlobalPct) {
       let afecto = 0;
       for (const it of c.items ?? []) {
         if (it.exento) continue;
-        const gross = Math.round(it.precio * it.cantidad);
-        const lineDsc = it.descuentoPct ? Math.round(gross * it.descuentoPct / 100) : 0;
-        afecto += gross - lineDsc;
+        afecto += montosDeLinea(it, c.tipoDocumento).montoItem;
       }
       descuentoGlobal = Math.round(afecto * c.descuentoGlobalPct / 100);
     }

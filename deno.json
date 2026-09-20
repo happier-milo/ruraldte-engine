@@ -1,6 +1,6 @@
 {
   "name": "@ruraldte/engine",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "license": "Apache-2.0",
   "nodeModulesDir": "none",
   "exports": {
@@ -29,15 +29,12 @@
     "./pkcs12": "./engine/pkcs12.ts",
     "./cert-factura": "./engine/cert-factura.ts",
     "./cert-harness": "./engine/cert-harness.ts",
-    "./cert-ruraldte": "./engine/cert-ruraldte.ts",
-    "./provider": "./provider/ruraldte.ts",
-    "./provider-types": "./provider/types.ts"
+    "./cert-ruraldte": "./engine/cert-ruraldte.ts"
   },
   "publish": {
     "include": [
       "engine/**/*.ts",
       "engine/xsd/**/*.xsd",
-      "provider/**/*.ts",
       "LICENSE",
       "NOTICE",
       "README.md"
@@ -45,8 +42,8 @@
     "exclude": ["**/*.test.ts"]
   },
   "tasks": {
-    "test": "deno test -A engine/ provider/",
-    "check": "deno check engine/*.ts provider/*.ts cert-tools/*.ts",
+    "test": "deno test -A engine/",
+    "check": "deno check engine/*.ts cert-tools/*.ts",
     "cert:xsd": "deno run -A cert-tools/validate-cert-factura-xsd.ts",
     "cert:precheck": "deno run -A cert-tools/precheck-cert-factura.ts"
   }

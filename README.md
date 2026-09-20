@@ -57,46 +57,91 @@ dependencias en total (`node-forge` y `@xmldom/xmldom`).
 
 ## Emitir una factura
 
+Emitir son tres pasos, y el motor expone uno por uno: firmar el documento, meterlo
+en un sobre firmado, subirlo al SII.
+
 ```ts
-import { RuralDteProvider } from "./provider/ruraldte.ts";
+import { buildSignedFacturaDte } from "./engine/factura-dte.ts";
+import { buildEnvioDte } from "./engine/envio-dte.ts";
+import { getLegacyToken, legacyUpload } from "./engine/sii-legacy-upload.ts";
 
-const provider = new RuralDteProvider();
-
-const res = await provider.emit({
-  emisor: {
-    rut: "78416626-0",
-    legalName: "MI EMPRESA SpA",
-    giro: "Servicios de tecnología",
-    address: "Av. Siempre Viva 742",
-    city: "Santiago",
-    acteco: 620200,
-  },
-  credentials: {
-    pfxBase64,             // tu certificado digital (.pfx), en base64
-    pfxPassword,
-    cafXmlBase64,          // el CAF del tipo que vas a emitir
-    certRut: "22222222-2", // RUT de la persona titular del certificado
-  },
-  documentType: 33,
+// 1. El documento: TED timbrado con tu CAF + XMLDSig con tu certificado.
+const dte = buildSignedFacturaDte({
+  tipoDte: 33,
   folio: 1,
-  receiver: { rut: "76543210-K", name: "CLIENTE SpA", giro: "Comercio",
-              address: "Los Olmos 123", city: "Temuco" },
-  amounts: { neto: 100000, iva: 19000, total: 119000 },
-  glosa: "Servicio de mantención",
-  paymentForm: 1,
-  certification: true,     // Maullín. false = Palena (producción)
+  fechaEmision: "2026-09-20",
+  formaPago: 1,
+  emisor: {
+    rut: "76543210-K",
+    razonSocial: "MI EMPRESA SpA",
+    giro: "Servicios de tecnología",
+    acteco: 620200,
+    dirOrigen: "Av. Siempre Viva 742",
+    cmnaOrigen: "Santiago",
+  },
+  receptor: {
+    rut: "11111111-1",
+    razonSocial: "CLIENTE SpA",
+    giro: "Comercio",
+    dirRecep: "Los Olmos 123",
+    cmnaRecep: "Temuco",
+  },
+  items: [{ nombre: "Servicio de mantención", cantidad: 1, precio: 100000 }],
+  totals: { neto: 100000, iva: 19000, exento: 0, total: 119000 },
+  cafXml,                       // el CAF del tipo que vas a emitir
+  tstedIso: "2026-09-20T10:00:00",
+  tmstFirma: "2026-09-20T10:00:00",
+  documentId: "F1T33",
+}, pfxBytes, pfxPassword);       // tu certificado digital (.pfx) y su contraseña
+
+// 2. El sobre EnvioDTE, también firmado. Van hasta 2.000 documentos por sobre.
+const sobre = buildEnvioDte({
+  setId: "DTE_33_1",
+  signedDtes: [dte],
+  caratula: {
+    rutEmisor: "76543210-K",
+    rutEnvia: "22222222-2",      // la persona titular del certificado
+    rutReceptor: "60803000-K",   // el SII
+    fchResol: "2014-08-22",      // la resolución que te autorizó
+    nroResol: 0,
+    tmstFirmaEnv: "2026-09-20T10:00:00",
+  },
+  pfxBytes,
+  password: pfxPassword,
 });
 
-console.log(res.trackId);  // el SII acusó recibo del sobre
+// 3. Autenticarse y subir. "cert" = Maullín (pruebas); "prod" = Palena.
+const token = await getLegacyToken("cert", pfxBytes, pfxPassword);
+const res = await legacyUpload("cert", {
+  xmlBytes: sobre.bytes,
+  token,
+  rutSender: "22222222-2",
+  rutCompany: "76543210-K",
+});
+
+console.log(res.trackId);        // el SII acusó recibo del sobre
 ```
 
 **`trackId` no es aceptación.** El SII responde el envío de inmediato y valida
 después. Hay que pollear:
 
 ```ts
-const estado = await provider.poll({ trackId: res.trackId, /* … */ });
-// estado.status: "accepted" | "accepted_with_reparos" | "rejected" | "processing"
+import { getLegacyEnvioStatus } from "./engine/sii-legacy-upload.ts";
+
+const estado = await getLegacyEnvioStatus("cert", {
+  trackId: res.trackId!,
+  rutSender: "22222222-2",
+  rutCompany: "76543210-K",
+  token,
+});
+// estado.outcome: "accepted" | "rejected" | "processing" | "unknown"
+// estado.breakdown: qué aceptó y qué reparó, por tipo de documento
 ```
+
+La boleta (39/41) va por otro canal del SII —REST, con sobre `EnvioBOLETA`—, así
+que sus piezas son `buildSignedBoletaDte`, `buildEnvioBoleta` y el
+`authenticate` + `sendEnvio` de `engine/sii-client.ts`. Son dos protocolos
+distintos del SII, no una preferencia de esta librería.
 
 Las credenciales viajan **por request**. El motor no tiene estado, no guarda
 nada y no conoce ninguna base de datos: cómo custodias el `.pfx` es tu
@@ -107,11 +152,15 @@ problema — y debería serlo.
 ```
 engine/        el motor: TED, XMLDSig, C14N inclusiva, sobres, libros, AEC,
                intercambio, clientes SII (REST y legacy), PKCS#12, códigos
-provider/      el contrato `DteProvider` (emit/poll/getPdf/getXml/healthcheck)
-               con errores tipados que distinguen "reintenta" de "no insistas"
 cert-tools/    pre-vuelo XSD antes de gastar folios en la certificación
 pdf-service/   representación gráfica + timbre PDF417, HTTP stateless
 ```
+
+Acá no hay una fachada tipo `DteProvider` a propósito. Esa capa —reintentos,
+ruteo, errores tipados, cómo guardas las credenciales— depende de cómo opere cada
+quien, y la que usamos nosotros está moldeada por nuestra base de datos. Publicarla
+sería ofrecer decisiones internas como si fueran las oficiales. El motor es la
+parte que el SII hace igual para todos; el resto se escribe a la medida.
 
 ### Decisiones que vale la pena conocer
 
@@ -165,11 +214,11 @@ que ahorran semanas:
 ## Tests
 
 ```bash
-deno task check && deno task test          # 214: 169 motor + 45 provider
+deno task check && deno task test          # 169 tests del motor
 cd pdf-service && npm install && npm test  #  85: PDF + timbre
 ```
 
-299 tests (214 + 85), todos offline. No son de humo: verifican firmas RSA de verdad,
+254 tests (169 + 85), todos offline. No son de humo: verifican firmas RSA de verdad,
 comparan el `<DD>` byte a byte contra el de un proveedor certificado, validan
 contra los XSD v2.5 oficiales del SII y decodifican el PDF417 del PDF de vuelta
 al TED que le dio origen.

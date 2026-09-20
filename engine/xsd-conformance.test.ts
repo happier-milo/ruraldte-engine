@@ -111,11 +111,24 @@ async function hasXmllint(): Promise<boolean> {
       .output();
     return success;
   } catch {
+    // Acá cae tanto "no está instalado" como "corriste sin --allow-run": desde este catch
+    // no se distinguen, y las dos terminan en el mismo skip silencioso. Por eso XSD_REQUIRED.
     return false;
   }
 }
 
 const HAS_XMLLINT = await hasXmllint();
+
+// El skip existe para la máquina de un dev sin libxml. En CI NO: un gate que se saltea en
+// silencio es un gate que no chequea, y lo que valida este archivo es el XML que recibe el
+// SII. Con XSD_REQUIRED=1 la ausencia de xmllint —o la falta de --allow-run, que desde acá
+// se ve igual— es un error ruidoso en vez de tres tests "ignored" y un ✓ verde.
+if (!HAS_XMLLINT && Deno.env.get("XSD_REQUIRED") === "1") {
+  throw new Error(
+    "XSD_REQUIRED=1 pero xmllint no respondió: instala libxml2-utils y corre los tests con " +
+      "--allow-run. El gate XSD no se saltea en CI.",
+  );
+}
 
 /** Sobre EnvioDTE de prueba con los DTE firmados que se le pasen. */
 function envio(signedDtes: Parameters<typeof buildEnvioDte>[0]["signedDtes"], pfx: Uint8Array): string {
