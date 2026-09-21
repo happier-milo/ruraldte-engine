@@ -214,11 +214,11 @@ que ahorran semanas:
 ## Tests
 
 ```bash
-deno task check && deno task test          # 169 tests del motor
+deno task check && deno task test          # 172 tests del motor
 cd pdf-service && npm install && npm test  #  85: PDF + timbre
 ```
 
-254 tests (169 + 85), todos offline. No son de humo: verifican firmas RSA de verdad,
+257 tests (172 + 85), todos offline. No son de humo: verifican firmas RSA de verdad,
 comparan el `<DD>` byte a byte contra el de un proveedor certificado, validan
 contra los XSD v2.5 oficiales del SII y decodifican el PDF417 del PDF de vuelta
 al TED que le dio origen.

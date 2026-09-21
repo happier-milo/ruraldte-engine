@@ -41,7 +41,7 @@ Necesitas [Deno](https://deno.com) 2.x y Node 24 (solo para el servicio de PDF).
 
 ```bash
 deno task check     # typecheck del motor
-deno task test      # 169 tests del motor
+deno task test      # 172 tests del motor
 cd pdf-service && npm install && npm test   # 85 tests del PDF y del timbre
 ```
 

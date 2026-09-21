@@ -11,7 +11,7 @@
  * `xmlBytes` deben ser los bytes latin1 de un XML PRETTY (acá no se formatea, no se valida ni se firma),
  * y deduplica por contenido: el mismo archivo reenviado responde STATUS 99 y vuelve con el track previo
  * y `dedup: true`. `legacyUpload` no lanza cuando el SII rechaza —devuelve `status`, `glosa` y
- * `trackId: null`—; el estado real lo trae después `getLegacyEnvioStatus`: `accepted` = EPR (sobres) o
+ * `trackId: null`—; el estado real lo trae después `getLegacyEnvioStatus`: `accepted` = EPR (sobres, y sin rechazos en el desglose) o
  * LSO (libros).
  *
  * @example
@@ -119,20 +119,30 @@ export async function getLegacyToken(
 
   const seedRes = await fetchFn(`${base}/DTEWS/CrSeed.jws`, {
     method: "POST",
-    headers: { "Content-Type": "text/xml; charset=UTF-8", "SOAPAction": "", "User-Agent": userAgent },
+    headers: {
+      "Content-Type": "text/xml; charset=UTF-8",
+      "SOAPAction": "",
+      "User-Agent": userAgent,
+    },
     body: soapEnvelope(`<m:getSeed xmlns:m="${base}/DTEWS/CrSeed.jws"/>`),
   });
   const seedBody = await seedRes.text();
   const seedInner = parseSoapReturn(seedBody, "getSeedReturn") ?? "";
   const semilla = seedInner.match(/<SEMILLA>([^<]+)<\/SEMILLA>/)?.[1];
   if (!semilla) {
-    throw new Error(`getLegacyToken: sin SEMILLA (HTTP ${seedRes.status}): ${seedBody.slice(0, 200)}`);
+    throw new Error(
+      `getLegacyToken: sin SEMILLA (HTTP ${seedRes.status}): ${seedBody.slice(0, 200)}`,
+    );
   }
 
   const signedTokenXml = buildSignedToken(semilla, pfxBytes, password);
   const tokRes = await fetchFn(`${base}/DTEWS/GetTokenFromSeed.jws`, {
     method: "POST",
-    headers: { "Content-Type": "text/xml; charset=UTF-8", "SOAPAction": "", "User-Agent": userAgent },
+    headers: {
+      "Content-Type": "text/xml; charset=UTF-8",
+      "SOAPAction": "",
+      "User-Agent": userAgent,
+    },
     body: soapEnvelope(
       `<m:getToken xmlns:m="${base}/DTEWS/GetTokenFromSeed.jws">` +
         `<pszXml xsi:type="xsd:string">${xmlEscape(signedTokenXml)}</pszXml></m:getToken>`,
@@ -282,15 +292,44 @@ export async function legacyUpload(
  * devuelve un trackId al instante con STATUS 0 = "recibido", pero la validación
  * real (schema/firma/montos) la resuelve el SII async → este poll trae el estado.
  *
- * Estados (RESP_BODY/ESTADO): EPR = Envío Procesado (los DTE pasaron, ≈ aceptado),
- * REC/SOK/PRD = en proceso, RFR/RPR/RCH/RSC/RCT/VOF = rechazado.
+ * Estados (RESP_BODY/ESTADO): EPR = Envío Procesado, REC/SOK/PRD = en proceso,
+ * RFR/RPR/RCH/RSC/RCT/VOF = rechazado.
+ *
+ * **EPR es el veredicto del SOBRE, NO el del documento.** El SII terminó de procesar
+ * el envío; los DTE de adentro pueden venir rechazados igual. El desglose por tipo
+ * (`breakdown`) es el que dice cuántos aceptó y cuántos rechazó, y es el que manda
+ * para `outcome`.
+ *
+ * Costó cuatro rechazos invisibles el 11-sep-2026: la factura 33 folio 43 volvió
+ * `EPR` a nivel de sobre con `(DTE-3-505) Firma DTE Incorrecta` adentro, y como acá
+ * sólo se leía el `<ESTADO>` del sobre quedó `accepted` en `dte_documents`. La alerta
+ * P1 de `finalizeDte` ("el SII RECHAZÓ un documento") existía y estaba bien escrita:
+ * nunca corrió porque jamás le llegó un veredicto `rejected`. El único lugar donde el
+ * rechazo era legible fue el correo `siidte_error@sii.cl`, que no lo lee nadie.
  */
 export type LegacyEnvioStatus = {
   estado: string | null;
   glosa: string | null;
   outcome: "accepted" | "rejected" | "processing" | "unknown";
+  /**
+   * Desglose por tipo de documento que el SII adjunta en RESP_BODY. Vacío cuando la
+   * respuesta no lo trae (envío aún sin procesar, o la forma corta `<ESTADO>` sola):
+   * vacío NO es "cero rechazos confirmados", es "el SII todavía no dice nada por
+   * documento" — por eso sólo se usa para DEGRADAR un sobre aceptado, nunca para
+   * ascender uno rechazado.
+   */
+  breakdown: LegacyTipoBreakdown[];
   /** XML de la respuesta (recortado) para diagnóstico/calibración en el 1er envío real. */
   raw: string;
+};
+
+/** Una entrada `<TIPO_DOCTO>…</REPAROS>` del desglose por tipo de RESP_BODY. */
+export type LegacyTipoBreakdown = {
+  tipoDocto: number;
+  informados: number;
+  aceptados: number;
+  rechazados: number;
+  reparos: number;
 };
 
 // EPR = sobre DTE "Envío Procesado". LSO = libro (IEV/IEC/Guía) con "Schema de
@@ -310,13 +349,44 @@ const LEGACY_PROCESSING = new Set(["REC", "SOK", "PRD", "PEN", "-11"]);
 const LEGACY_REJECTED = new Set(["RFR", "RPR", "RCH", "RSC", "RCT", "RLV", "VOF", "RDC"]);
 
 /**
+ * Lee el desglose por tipo que el SII adjunta en RESP_BODY. Forma VIVA de maullin
+ * (2026-06-14), un bloque por tipo de documento del sobre:
+ *
+ *   <TIPO_DOCTO>33</TIPO_DOCTO><INFORMADOS>4</INFORMADOS><ACEPTADOS>3</ACEPTADOS>
+ *   <RECHAZADOS>0</RECHAZADOS><REPAROS>1</REPAROS>
+ *
+ * Se ancla en `TIPO_DOCTO` y lee los cuatro contadores que lo siguen ANTES del
+ * próximo `TIPO_DOCTO`, para no mezclar tipos cuando el sobre lleva varios. Un
+ * contador ausente cuenta 0; un bloque sin `TIPO_DOCTO` numérico se descarta.
+ */
+export function parseLegacyBreakdown(inner: string): LegacyTipoBreakdown[] {
+  const out: LegacyTipoBreakdown[] = [];
+  const anchors = [...inner.matchAll(/<TIPO_DOCTO>\s*(\d+)\s*<\/TIPO_DOCTO>/g)];
+  for (let i = 0; i < anchors.length; i++) {
+    const start = anchors[i].index! + anchors[i][0].length;
+    const end = i + 1 < anchors.length ? anchors[i + 1].index! : inner.length;
+    const chunk = inner.slice(start, end);
+    const num = (tag: string) =>
+      Number(chunk.match(new RegExp(`<${tag}>\\s*(\\d+)\\s*</${tag}>`))?.[1] ?? 0);
+    out.push({
+      tipoDocto: Number(anchors[i][1]),
+      informados: num("INFORMADOS"),
+      aceptados: num("ACEPTADOS"),
+      rechazados: num("RECHAZADOS"),
+      reparos: num("REPAROS"),
+    });
+  }
+  return out;
+}
+
+/**
  * Consulta el estado de un envío legacy por su trackId (`QueryEstUp.jws/getEstUp`).
  * `input.rutSender` no se manda: la operación del WSDL toma solo RUT de la empresa, trackId y
  * token, y agregar el consultante devuelve HTTP 500 (queda en la firma por compatibilidad).
  *
  * @param env Elige el host de la consulta (`"cert"` = maullin, `"prod"` = palena): usa el mismo ambiente donde subiste el envío.
  * @param input `token` es el del canal legacy (`getLegacyToken`), no el token REST de boleta; `fetchFn` reemplaza a `fetch` para tests.
- * @returns `estado` en mayúsculas: el primer `ESTADO` de la respuesta que sea un estado de envío conocido, ignorando el `ESTADO` 0 de "consulta correcta". `glosa` es la del envío (se descarta la de la consulta). `outcome` clasifica ese estado —EPR de sobres y LSO de libros ⇒ `"accepted"`— y `raw` trae la respuesta recortada a 4000 caracteres. Si no viene ningún `ESTADO`, `estado` queda en `null`; si viene uno fuera de las listas conocidas, se devuelve tal cual. En ambos casos `outcome` es `"unknown"`, que no es un rechazo.
+ * @returns `estado` en mayúsculas: el primer `ESTADO` de la respuesta que sea un estado de envío conocido, ignorando el `ESTADO` 0 de "consulta correcta". `glosa` es la del envío (se descarta la de la consulta). `breakdown` es el desglose por tipo de RESP_BODY (vacío si la respuesta no lo trae) y `raw` la respuesta recortada a 4000 caracteres. `outcome` combina las dos cosas: EPR de sobres y LSO de libros son `"accepted"` **sólo si el desglose no acusa rechazos** — con `RECHAZADOS > 0` el veredicto es `"rejected"`, porque el sobre procesado no dice nada sobre los DTE que lleva dentro. Si no viene ningún `ESTADO`, `estado` queda en `null`; si viene uno fuera de las listas conocidas, se devuelve tal cual. En ambos casos `outcome` es `"unknown"`, que no es un rechazo.
  * @throws Lo que lance `fetchFn` (red caída, DNS, timeout). Una respuesta HTTP de error no lanza: queda ilegible y cae en `outcome: "unknown"`.
  */
 export async function getLegacyEnvioStatus(
@@ -367,13 +437,15 @@ export async function getLegacyEnvioStatus(
   // estado de envío CONOCIDO (EPR/RPR/REC/…), ignorando el 0 de la consulta.
   const estados = [...inner.matchAll(/<ESTADO>\s*([A-Za-z0-9-]+)\s*<\/ESTADO>/g)]
     .map((m) => m[1].toUpperCase());
-  const isKnown = (e: string) => LEGACY_ACCEPTED.has(e) || LEGACY_REJECTED.has(e) || LEGACY_PROCESSING.has(e);
+  const isKnown = (e: string) =>
+    LEGACY_ACCEPTED.has(e) || LEGACY_REJECTED.has(e) || LEGACY_PROCESSING.has(e);
   const estado = estados.find(isKnown) ?? estados.find((e) => e !== "0") ?? estados[0] ?? null;
   // Glosa del envío (preferimos la que NO es la "consulta correcta" del RESP_HDR).
   const glosa = [...inner.matchAll(/<GLOSA(?:_ESTADO)?>\s*([\s\S]*?)\s*<\/GLOSA(?:_ESTADO)?>/g)]
     .map((m) => m[1].trim())
     .find((g) => g && !/consulta correcta/i.test(g)) ?? null;
-  const outcome: LegacyEnvioStatus["outcome"] = estado === null
+  const breakdown = parseLegacyBreakdown(inner);
+  const envelopeOutcome: LegacyEnvioStatus["outcome"] = estado === null
     ? "unknown"
     : LEGACY_ACCEPTED.has(estado)
     ? "accepted"
@@ -382,5 +454,18 @@ export async function getLegacyEnvioStatus(
     : LEGACY_PROCESSING.has(estado)
     ? "processing"
     : "unknown";
-  return { estado, glosa, outcome, raw: inner.slice(0, 4000) };
+
+  // El sobre aceptado (EPR/LSO) NO implica documentos aceptados: el SII puede
+  // responder "Envio Procesado" y rechazar los DTE de adentro uno por uno. Si el
+  // desglose acusa rechazos, el veredicto del ENVÍO es rechazado — un `accepted`
+  // acá se escribe tal cual en `dte_documents.status` y apaga la alerta P1.
+  //
+  // Sólo DEGRADA: un sobre en proceso o rechazado no se asciende por un desglose
+  // en cero, porque el desglose vacío es "todavía no hay veredicto", no "todo bien".
+  const rechazados = breakdown.reduce((n, b) => n + b.rechazados, 0);
+  const outcome: LegacyEnvioStatus["outcome"] = envelopeOutcome === "accepted" && rechazados > 0
+    ? "rejected"
+    : envelopeOutcome;
+
+  return { estado, glosa, outcome, breakdown, raw: inner.slice(0, 4000) };
 }

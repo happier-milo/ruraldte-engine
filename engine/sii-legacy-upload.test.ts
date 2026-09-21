@@ -12,7 +12,8 @@ import { getLegacyEnvioStatus, parseRecepcionDte, parseSoapReturn } from "./sii-
 /** fetch falso: envuelve un XML interno en un getEstUpReturn (escapado) como maullin. */
 function mockEstUpFetch(innerXml: string): typeof fetch {
   const esc = innerXml.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const soap = `<?xml version="1.0"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">` +
+  const soap =
+    `<?xml version="1.0"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">` +
     `<soapenv:Body><ns1:getEstUpResponse xmlns:ns1="https://maullin.sii.cl/DTEWS/QueryEstUp.jws">` +
     `<ns1:getEstUpReturn xsi:type="xsd:string">${esc}</ns1:getEstUpReturn>` +
     `</ns1:getEstUpResponse></soapenv:Body></soapenv:Envelope>`;
@@ -44,14 +45,16 @@ Deno.test("parseRecepcionDte: STATUS 0 con TRACKID (upload OK — RCOF real 0251
 });
 
 Deno.test("parseRecepcionDte: STATUS 7 esquema inválido (sin track)", () => {
-  const raw = `<RECEPCIONDTE>\n <STATUS>7</STATUS>\n <DETAIL>\n<ERROR>SCH-00001: Invalid Schema Name</ERROR>\n</DETAIL>\n</RECEPCIONDTE>`;
+  const raw =
+    `<RECEPCIONDTE>\n <STATUS>7</STATUS>\n <DETAIL>\n<ERROR>SCH-00001: Invalid Schema Name</ERROR>\n</DETAIL>\n</RECEPCIONDTE>`;
   const r = parseRecepcionDte(raw);
   assertEquals(r.status, 7);
   assertEquals(r.trackId, null);
 });
 
 Deno.test("parseRecepcionDte: la glosa del rechazo sobrevive (STATUS 7 sin ella no se puede arreglar)", () => {
-  const raw = `<RECEPCIONDTE>\n <STATUS>7</STATUS>\n <DETAIL>\n<ERROR>SCH-00001: Invalid Schema Name</ERROR>\n</DETAIL>\n</RECEPCIONDTE>`;
+  const raw =
+    `<RECEPCIONDTE>\n <STATUS>7</STATUS>\n <DETAIL>\n<ERROR>SCH-00001: Invalid Schema Name</ERROR>\n</DETAIL>\n</RECEPCIONDTE>`;
   assertEquals(parseRecepcionDte(raw).glosa, "SCH-00001: Invalid Schema Name");
 });
 
@@ -81,7 +84,8 @@ Deno.test("parseRecepcionDte: sin tag conocido, la glosa cae al texto suelto tra
 });
 
 Deno.test("parseRecepcionDte: un upload OK no inventa glosa", () => {
-  const raw = `<RECEPCIONDTE>\n <STATUS>0</STATUS>\n <TRACKID>0251552460</TRACKID>\n</RECEPCIONDTE>`;
+  const raw =
+    `<RECEPCIONDTE>\n <STATUS>0</STATUS>\n <TRACKID>0251552460</TRACKID>\n</RECEPCIONDTE>`;
   assertEquals(parseRecepcionDte(raw).glosa, null);
 });
 
@@ -95,13 +99,15 @@ Deno.test("parseRecepcionDte: dedup 'ya fue enviado' devuelve el track previo", 
 });
 
 Deno.test("getLegacyEnvioStatus: ignora el ESTADO=0 (consulta correcta) y toma el estado de envío conocido (EPR)", async () => {
-  const inner =
-    `<?xml version="1.0"?><SII:RESPUESTA xmlns:SII="http://www.sii.cl/XMLSchema">` +
+  const inner = `<?xml version="1.0"?><SII:RESPUESTA xmlns:SII="http://www.sii.cl/XMLSchema">` +
     `<SII:RESP_HDR><ESTADO>0</ESTADO><GLOSA>consulta correcta</GLOSA></SII:RESP_HDR>` +
     `<SII:RESP_BODY><TRACKID>251550580</TRACKID><ESTADO>EPR</ESTADO><GLOSA>Envio Procesado</GLOSA></SII:RESP_BODY>` +
     `</SII:RESPUESTA>`;
   const r = await getLegacyEnvioStatus("cert", {
-    trackId: "251550580", rutSender: "22222222-2", rutCompany: "78416626-0", token: "TKN",
+    trackId: "251550580",
+    rutSender: "22222222-2",
+    rutCompany: "78416626-0",
+    token: "TKN",
     fetchFn: mockEstUpFetch(inner),
   });
   assertEquals(r.estado, "EPR");
@@ -112,25 +118,98 @@ Deno.test("getLegacyEnvioStatus: ignora el ESTADO=0 (consulta correcta) y toma e
 Deno.test("getLegacyEnvioStatus: forma VIVA de maullin — ESTADO=EPR en RESP_HDR, desglose por tipo en RESP_BODY", async () => {
   // Respuesta real de QueryEstUp por TrackId (2026-06-14): el estado del envío va
   // en RESP_HDR; RESP_BODY trae el conteo por tipo de documento (sin ESTADO).
-  const inner =
-    `<?xml version="1.0"?><SII:RESPUESTA xmlns:SII="http://www.sii.cl/XMLSchema">` +
+  const inner = `<?xml version="1.0"?><SII:RESPUESTA xmlns:SII="http://www.sii.cl/XMLSchema">` +
     `<SII:RESP_BODY><TIPO_DOCTO>33</TIPO_DOCTO><INFORMADOS>4</INFORMADOS><ACEPTADOS>3</ACEPTADOS>` +
     `<RECHAZADOS>0</RECHAZADOS><REPAROS>1</REPAROS></SII:RESP_BODY>` +
     `<SII:RESP_HDR><TRACKID>0251753678</TRACKID><ESTADO>EPR</ESTADO><GLOSA>Envio Procesado</GLOSA></SII:RESP_HDR>` +
     `</SII:RESPUESTA>`;
   const r = await getLegacyEnvioStatus("cert", {
-    trackId: "0251753678", rutSender: "22222222-2", rutCompany: "78416626-0", token: "TKN",
+    trackId: "0251753678",
+    rutSender: "22222222-2",
+    rutCompany: "78416626-0",
+    token: "TKN",
     fetchFn: mockEstUpFetch(inner),
   });
   assertEquals(r.estado, "EPR");
+  // Sin rechazos el sobre sigue siendo `accepted`; el reparo lo escala el provider a
+  // DNK leyendo el desglose, que acá tiene que quedar parseado y disponible.
   assertEquals(r.outcome, "accepted");
   assertEquals(r.glosa, "Envio Procesado");
+  assertEquals(r.breakdown, [
+    { tipoDocto: 33, informados: 4, aceptados: 3, rechazados: 0, reparos: 1 },
+  ]);
+});
+
+// REGRESIÓN del 11-sep-2026 (tracks 0258387070 y 0258389398): el SII devolvió el
+// sobre EPR "Envio Procesado" con la factura 33 folio 43 RECHAZADA adentro por
+// "(DTE-3-505) Firma DTE Incorrecta". Leyendo sólo el <ESTADO> del sobre esto daba
+// `accepted`, se escribía accepted en dte_documents y la alerta P1 de finalizeDte
+// nunca corría: el rechazo sólo existía en el correo siidte_error@sii.cl.
+Deno.test("getLegacyEnvioStatus: EPR con RECHAZADOS>0 en el desglose → outcome rejected", async () => {
+  const inner = `<?xml version="1.0"?><SII:RESPUESTA xmlns:SII="http://www.sii.cl/XMLSchema">` +
+    `<SII:RESP_BODY><TIPO_DOCTO>33</TIPO_DOCTO><INFORMADOS>1</INFORMADOS><ACEPTADOS>0</ACEPTADOS>` +
+    `<RECHAZADOS>1</RECHAZADOS><REPAROS>0</REPAROS></SII:RESP_BODY>` +
+    `<SII:RESP_HDR><TRACKID>0258389398</TRACKID><ESTADO>EPR</ESTADO><GLOSA>Envio Procesado</GLOSA></SII:RESP_HDR>` +
+    `</SII:RESPUESTA>`;
+  const r = await getLegacyEnvioStatus("cert", {
+    trackId: "0258389398",
+    rutSender: "22222222-2",
+    rutCompany: "78416626-0",
+    token: "TKN",
+    fetchFn: mockEstUpFetch(inner),
+  });
+  assertEquals(r.estado, "EPR");
+  assertEquals(r.outcome, "rejected");
+  assertEquals(r.breakdown[0].rechazados, 1);
+});
+
+Deno.test("getLegacyEnvioStatus: desglose de varios tipos — los contadores no se mezclan entre bloques", async () => {
+  const inner = `<SII:RESPUESTA xmlns:SII="http://www.sii.cl/XMLSchema">` +
+    `<SII:RESP_BODY>` +
+    `<TIPO_DOCTO>33</TIPO_DOCTO><INFORMADOS>2</INFORMADOS><ACEPTADOS>2</ACEPTADOS>` +
+    `<RECHAZADOS>0</RECHAZADOS><REPAROS>0</REPAROS>` +
+    `<TIPO_DOCTO>46</TIPO_DOCTO><INFORMADOS>3</INFORMADOS><ACEPTADOS>1</ACEPTADOS>` +
+    `<RECHAZADOS>2</RECHAZADOS><REPAROS>0</REPAROS>` +
+    `</SII:RESP_BODY>` +
+    `<SII:RESP_HDR><ESTADO>EPR</ESTADO><GLOSA>Envio Procesado</GLOSA></SII:RESP_HDR></SII:RESPUESTA>`;
+  const r = await getLegacyEnvioStatus("cert", {
+    trackId: "1",
+    rutSender: "22222222-2",
+    rutCompany: "78416626-0",
+    token: "T",
+    fetchFn: mockEstUpFetch(inner),
+  });
+  assertEquals(r.breakdown, [
+    { tipoDocto: 33, informados: 2, aceptados: 2, rechazados: 0, reparos: 0 },
+    { tipoDocto: 46, informados: 3, aceptados: 1, rechazados: 2, reparos: 0 },
+  ]);
+  assertEquals(r.outcome, "rejected");
+});
+
+// El desglose sólo DEGRADA. Un sobre en proceso con desglose vacío no se asciende a
+// aceptado: vacío es "el SII todavía no dice nada por documento".
+Deno.test("getLegacyEnvioStatus: desglose vacío no altera el veredicto del sobre", async () => {
+  const inner = `<SII:RESP_BODY><ESTADO>REC</ESTADO></SII:RESP_BODY>`;
+  const r = await getLegacyEnvioStatus("cert", {
+    trackId: "1",
+    rutSender: "22222222-2",
+    rutCompany: "78416626-0",
+    token: "T",
+    fetchFn: mockEstUpFetch(inner),
+  });
+  assertEquals(r.outcome, "processing");
+  assertEquals(r.breakdown, []);
 });
 
 Deno.test("getLegacyEnvioStatus: RPR (rechazado) → outcome rejected", async () => {
-  const inner = `<SII:RESP_BODY><ESTADO>RPR</ESTADO><GLOSA>Rechazado por reparos</GLOSA></SII:RESP_BODY>`;
+  const inner =
+    `<SII:RESP_BODY><ESTADO>RPR</ESTADO><GLOSA>Rechazado por reparos</GLOSA></SII:RESP_BODY>`;
   const r = await getLegacyEnvioStatus("cert", {
-    trackId: "1", rutSender: "22222222-2", rutCompany: "78416626-0", token: "T", fetchFn: mockEstUpFetch(inner),
+    trackId: "1",
+    rutSender: "22222222-2",
+    rutCompany: "78416626-0",
+    token: "T",
+    fetchFn: mockEstUpFetch(inner),
   });
   assertEquals(r.estado, "RPR");
   assertEquals(r.outcome, "rejected");
@@ -139,7 +218,11 @@ Deno.test("getLegacyEnvioStatus: RPR (rechazado) → outcome rejected", async ()
 Deno.test("getLegacyEnvioStatus: REC (en proceso) → outcome processing", async () => {
   const inner = `<SII:RESP_BODY><ESTADO>REC</ESTADO></SII:RESP_BODY>`;
   const r = await getLegacyEnvioStatus("cert", {
-    trackId: "1", rutSender: "22222222-2", rutCompany: "78416626-0", token: "T", fetchFn: mockEstUpFetch(inner),
+    trackId: "1",
+    rutSender: "22222222-2",
+    rutCompany: "78416626-0",
+    token: "T",
+    fetchFn: mockEstUpFetch(inner),
   });
   assertEquals(r.estado, "REC");
   assertEquals(r.outcome, "processing");
@@ -147,12 +230,15 @@ Deno.test("getLegacyEnvioStatus: REC (en proceso) → outcome processing", async
 
 Deno.test("getLegacyEnvioStatus: LSO (libro con schema correcto) → outcome accepted", async () => {
   // Estado de aceptación de un LIBRO (IEV/IEC/Guía): LSO, no EPR.
-  const inner =
-    `<SII:RESPUESTA xmlns:SII="http://www.sii.cl/XMLSchema">` +
+  const inner = `<SII:RESPUESTA xmlns:SII="http://www.sii.cl/XMLSchema">` +
     `<SII:RESP_HDR><TRACKID>251753692</TRACKID><ESTADO>LSO</ESTADO>` +
     `<GLOSA>Schema de Envio de Libro Correcto</GLOSA></SII:RESP_HDR></SII:RESPUESTA>`;
   const r = await getLegacyEnvioStatus("cert", {
-    trackId: "251753692", rutSender: "22222222-2", rutCompany: "78416626-0", token: "T", fetchFn: mockEstUpFetch(inner),
+    trackId: "251753692",
+    rutSender: "22222222-2",
+    rutCompany: "78416626-0",
+    token: "T",
+    fetchFn: mockEstUpFetch(inner),
   });
   assertEquals(r.estado, "LSO");
   assertEquals(r.outcome, "accepted");
