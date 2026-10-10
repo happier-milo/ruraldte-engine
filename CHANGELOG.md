@@ -3,6 +3,31 @@
 Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) ·
 Versionado [SemVer](https://semver.org/lang/es/).
 
+## [0.6.1] — 2026-10-09
+
+Lo que contestó el SII de verdad. El 9-oct-2026 se mandaron tres sobres de boletas al
+ambiente de certificación y las respuestas quedaron de fixture en `sii-status.test.ts`:
+la consulta de un envío (con el `trackid` como texto y `detalle` en `null`) y los cuatro
+códigos de la consulta de una boleta (`DOK`, `DNK`, `FAU`, `FNA`). En un sobre de 61
+boletas con 60 aceptadas, el SII listó en el detalle solo la rechazada: lo que prueba
+a las aceptadas es la estadística por tipo.
+
+### Corregido
+- **`parseEnvioBoletaStatus`** — la consulta de un envío trae el `trackid` como TEXTO
+  (`"trackid":"32670078"`; al subir el sobre viene como número) y `error[].detalle` en
+  `null`. El lector los daba por "tipo inesperado" y no los recuperaba. Ahora los
+  conserva como vienen, sin convertir: `trackid` es `number | string` y `detalle` es
+  `string | null`. Un `trackid` que no sea un entero ni un texto de solo dígitos sigue
+  siendo una observación.
+- **`getBoletaStatus`** — el comentario decía que `rut_receptor`, `dv_receptor`,
+  `monto` y `fechaEmision` son opcionales. El SII los exige: sin ellos contesta HTTP
+  200 con el texto `falta rut_receptor`.
+- **`sii-folios`** — cada paso contra el portal de folios sale con plazo: 30 segundos
+  las lecturas y 120 los pasos que otorgan folios (`plazoDelPaso`). Antes una conexión
+  que el portal dejaba abierta colgaba a quien pedía folios. Y una respuesta vacía o
+  con error en la primera página de la consulta ya no se lee como "tipo habilitado,
+  sin timbrajes": la consulta falla.
+
 ## [0.6.0] — 2026-10-09
 
 ### Añadido

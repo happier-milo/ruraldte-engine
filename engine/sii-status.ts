@@ -19,7 +19,8 @@ export type EnvioBoletaStatusError = {
   nivel?: number;
   codigo?: number;
   descripcion?: string;
-  detalle?: string;
+  /** El SII lo manda en null cuando no hay más que decir (visto en certificación, 9-oct-2026). */
+  detalle?: string | null;
 };
 
 export type EnvioBoletaStatusDetail = {
@@ -33,7 +34,12 @@ export type EnvioBoletaStatusDetail = {
 export type EnvioBoletaStatusData = {
   rut_emisor?: string;
   rut_envia?: string;
-  trackid?: number;
+  /**
+   * Número en la respuesta del envío y TEXTO en la consulta del mismo envío (visto en
+   * certificación, 9-oct-2026: `"trackid": 32670078` y `"trackid":"32670078"`). Se
+   * conserva como viene, sin convertir.
+   */
+  trackid?: number | string;
   fecha_recepcion?: string;
   estado?: string;
   estadistica?: {
@@ -58,9 +64,15 @@ export type ParsedSiiStatus<T> = {
   observations: string[];
 };
 
-type Field = "string" | "integer" | "nullableInteger" | {
-  codes: readonly string[];
-} | { items: Shape };
+type Field =
+  | "string"
+  | "nullableString"
+  | "integer"
+  | "nullableInteger"
+  /** Un entero, o el mismo entero escrito como texto de solo dígitos. */
+  | "integerOrDigits"
+  | { codes: readonly string[] }
+  | { items: Shape };
 type Shape = { [key: string]: Field };
 
 const BOLETA: Shape = {
@@ -85,7 +97,7 @@ const BOLETA: Shape = {
 const ENVIO: Shape = {
   rut_emisor: "string",
   rut_envia: "string",
-  trackid: "integer",
+  trackid: "integerOrDigits",
   fecha_recepcion: "string",
   estado: {
     codes: [
@@ -139,7 +151,7 @@ const ENVIO: Shape = {
           nivel: "integer",
           codigo: "integer",
           descripcion: "string",
-          detalle: "string",
+          detalle: "nullableString",
         },
       },
     },
@@ -195,10 +207,12 @@ function readFields(
         observations.push(name + ": código desconocido");
       }
     } else if (
-      (field === "string" && typeof item === "string") ||
-      (field !== "string" && typeof item === "number" &&
-        Number.isSafeInteger(item)) ||
-      (field === "nullableInteger" && item === null)
+      ((field === "string" || field === "nullableString") && typeof item === "string") ||
+      ((field === "integer" || field === "nullableInteger" || field === "integerOrDigits") &&
+        typeof item === "number" && Number.isSafeInteger(item)) ||
+      ((field === "nullableInteger" || field === "nullableString") && item === null) ||
+      // Hasta 15 dígitos: el mismo rango que un entero seguro, sin convertirlo.
+      (field === "integerOrDigits" && typeof item === "string" && /^\d{1,15}$/.test(item))
     ) {
       data[key] = item;
     } else {

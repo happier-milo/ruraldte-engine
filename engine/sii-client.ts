@@ -494,7 +494,13 @@ export async function getBoletaStatus(
     folio: number;
     token: string;
     userAgent: string;
-    /** Query opcional del OpenAPI: rut_receptor, dv_receptor, monto y fechaEmision (DD-MM-YYYY). */
+    /**
+     * rut_receptor, dv_receptor, monto y fechaEmision (DD-MM-YYYY). El tipo los deja
+     * opcionales, pero el SII los exige: sin ellos contesta HTTP 200 con el texto
+     * `falta rut_receptor` (visto en certificación, 9-oct-2026). Con ellos contesta
+     * `{"codigo","descripcion"}`: DOK si el documento está y los datos coinciden, DNK
+     * si está con otros datos, FAU si no lo recibió.
+     */
     query?: Record<string, string | number>;
     /** Captura Content-Type solo cuando se solicita; conserva el retorno anterior por defecto. */
     includeContentType?: boolean;
