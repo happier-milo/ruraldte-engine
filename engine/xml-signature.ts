@@ -61,6 +61,7 @@
 
 import forge from "npm:node-forge@1.3.1";
 import { canonicalize, parseXml } from "./c14n.ts";
+import { firmarRsaSha1 } from "./rsa-firma.ts";
 import { extractPemFromPkcs12 } from "./pkcs12.ts";
 
 const C14N_ALGO = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
@@ -747,7 +748,6 @@ export function signBoletaDte(
   password: string,
 ): string {
   const { certPem, pkeyPem } = extractPemFromPkcs12(pfxBytes, password);
-  const privateKey = forge.pki.privateKeyFromPem(pkeyPem);
   const certificate = forge.pki.certificateFromPem(certPem);
 
   // 1. Forma emitida del Documento: pretty CRLF en cada frontera de tags. El
@@ -769,9 +769,10 @@ export function signBoletaDte(
   const canonicalSignedInfo = canonicalize(
     parseXml(injectInheritedNamespace(signedInfoInner, "SignedInfo", DSIG_NS)).documentElement,
   );
-  const md = forge.md.sha1.create();
-  md.update(canonicalSignedInfo, "utf8");
-  const signatureValueBase64 = forge.util.encode64(privateKey.sign(md));
+  // La firma nativa del runtime, comprobada contra la de forge (rsa-firma.ts): son los
+  // mismos bytes y cuesta la décima parte de CPU. Es la firma que se repite por cada
+  // documento de un lote.
+  const signatureValueBase64 = firmarRsaSha1(pkeyPem, canonicalSignedInfo);
 
   // 4. KeyInfo: modulus/exponent sin envolver (~344 chars); X509 envuelto a 76.
   const pub = certificate.publicKey;

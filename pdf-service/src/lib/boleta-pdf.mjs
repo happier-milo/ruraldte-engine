@@ -111,8 +111,16 @@ function roundRectPath(w, h, r) {
  *   bajo la fila; `valor` es opcional (una fila puede ser solo una leyenda).
  * @property {string} [leyendaVencimiento]
  *   REEMPLAZA la fecha en la franja de vencimiento (p.ej. "Corte en trámite").
- * @property {{fono?:string, horario?:string}} [contacto]
- *   Teléfono de atención y su horario, bajo los datos del emisor.
+ * @property {{fono?:string, horario?:string, emergencia?:string}} [contacto]
+ *   Teléfono de atención y su horario, bajo los datos del emisor. `emergencia`
+ *   es un segundo teléfono, en su propia línea.
+ * @property {{titulo?:string, unidad?:string, puntos:{etiqueta:string, valor:number}[]}} [historial]
+ *   Serie corta (hasta 12 puntos, del más viejo al más nuevo) que se dibuja en
+ *   barras a la izquierda de los totales, con el último punto destacado. Con
+ *   menos de 2 puntos no se dibuja.
+ * @property {{titulo?:string, filas:{label:string, valor:string}[]}} [tarifario]
+ *   Tabla chica de etiqueta y valor (hasta 10 filas) bajo el historial: la
+ *   tarifa vigente completa, no solo lo cobrado.
  * @property {string[]} [notas]
  *   Líneas informativas al pie de los totales que NO suman al total
  *   (p.ej. pagos recibidos desde la última facturación).
@@ -173,11 +181,53 @@ function roundRectPath(w, h, r) {
 
 /** @param {BoletaPdfInput} input @returns {Promise<{pdf:Uint8Array, xDimMils:number}>} */
 export async function generateBoletaElectronicaPdf(input) {
+  // LO QUE NO SE NEGOCIA: el timbre se dibuja entero y nada lo tapa. Una boleta
+  // con muchas filas (tarjeta de datos larga, cinco tramos, subsidio, saldo
+  // anterior) no cabía, y el pie se dibujaba ENCIMA del timbre: sin error, y con
+  // un documento que no se puede verificar. Se dibuja por niveles, del más
+  // holgado al más apretado, y se entrega el primero en que todo cabe:
+  //   0  normal
+  //   1  menos aire ENTRE secciones (lo primero que se cede: no cuesta lectura)
+  //   2  además, la escalera de cargos más junta
+  //   3  además, sin la tabla de tarifas
+  //   4  además, sin el gráfico
+  //   5  el timbre y el pie pasan a una segunda hoja (cabe siempre)
+  for (let nivel = 0; nivel < NIVEL_SEGUNDA_HOJA; nivel++) {
+    const intento = await dibujarBoleta(input, nivel);
+    if (!intento.desborda) return { pdf: intento.pdf, xDimMils: intento.xDimMils, nivel };
+  }
+  const ultimo = await dibujarBoleta(input, NIVEL_SEGUNDA_HOJA);
+  return { pdf: ultimo.pdf, xDimMils: ultimo.xDimMils, nivel: NIVEL_SEGUNDA_HOJA };
+}
+
+const NIVEL_SEGUNDA_HOJA = 5;
+
+/**
+ * La escala de espaciado de cada nivel, en puntos. Un solo lugar: antes cada
+ * bloque traía su número suelto y el ritmo entre secciones iba de 14 a 32.
+ *   seccion   aire entre un bloque y el siguiente
+ *   dato      interlínea de las filas de las tarjetas
+ *   fila      interlínea de la escalera de cargos
+ *   sub       de una fila a SU línea de detalle (más cerca que de la que sigue)
+ *   trasSub   de la línea de detalle a la fila siguiente
+ *   corte     aire extra antes de una fila con regla (SUBTOTAL, TOTAL)
+ *   aire      bajo el timbre, fuera de su zona quieta
+ */
+const ESPACIADO = [
+  { seccion: 18, dato: 14, fila: 13.5, sub: 9.5, trasSub: 13.5, corte: 4, aire: 16 },
+  { seccion: 12, dato: 12.5, fila: 13.5, sub: 9.5, trasSub: 13.5, corte: 4, aire: 8 },
+  { seccion: 10, dato: 12, fila: 12, sub: 8.5, trasSub: 12, corte: 3, aire: 6 },
+];
+
+async function dibujarBoleta(input, nivel) {
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
-  const page = doc.addPage([PAGE_W, PAGE_H]);
+  // `let`: en el último nivel el timbre y el pie se dibujan en una hoja nueva,
+  // y los ayudantes de abajo escriben siempre en la hoja en curso.
+  let page = doc.addPage([PAGE_W, PAGE_H]);
   const tipoDte = input.tipoDte === 41 ? 41 : 39;
+  const sp = ESPACIADO[Math.min(nivel, ESPACIADO.length - 1)];
 
   // Marca de agua SOLO para demos (input.watermark, p.ej. "DEMO"). Los documentos
   // OFICIALES no llevan marca. Se dibuja al FONDO (antes de todo) → la quiet zone
@@ -273,10 +323,16 @@ export async function generateBoletaElectronicaPdf(input) {
   // Contacto de atención. En dos líneas: juntas se pasan del ancho disponible y
   // el wrap deja el horario colgando bajo el recuadro rojo.
   const rep = input.representacion || {};
-  labeled("Atención y emergencias", rep.contacto?.fono);
+  // Con un teléfono de emergencias propio, cada número dice para qué es; con
+  // uno solo, ese atiende las dos cosas.
+  const emergencia = rep.contacto?.emergencia;
+  labeled(emergencia ? "Atención de usuarios" : "Atención y emergencias", rep.contacto?.fono);
   labeled("Horario de atención", rep.contacto?.horario);
+  labeled("Emergencias", emergencia);
 
-  y = Math.min(ey, rbTop - rbH) - 14;
+  // `ey` ya bajó una interlínea tras la última fila del emisor: se descuenta
+  // para que el aire real sea el de la escala.
+  y = Math.min(ey + 9, rbTop - rbH) - sp.seccion;
 
   // ── Tarjetas Receptor + Datos ────────────────────────────────────────────
   const gap = 16;
@@ -296,7 +352,20 @@ export async function generateBoletaElectronicaPdf(input) {
       .filter((d) => d && d.label)
       .map((d) => [String(d.label), d.valor]),
   ].filter(([, v]) => v != null && v !== "");
-  const cardH = Math.max(76, 34 + Math.max(0, datos.length - 1) * 14 + 12);
+  // Con muchas filas, las que sobran pasan a la tarjeta del receptor, que tiene
+  // aire: una sola columna de diez filas se llevaba 170pt de la hoja. Las tres
+  // primeras (emisión, período, medidor) se quedan siempre a la derecha.
+  const filaDato = sp.dato;
+  const altoDerecha = (n) => 34 + Math.max(0, n - 1) * filaDato + 12;
+  const altoIzquierda = (n) => (n > 0 ? 79 + (n - 1) * filaDato + 12 : 76);
+  let aLaDerecha = datos.length;
+  for (let k = datos.length; k >= Math.min(3, datos.length); k--) {
+    const alto = Math.max(altoDerecha(k), altoIzquierda(datos.length - k));
+    if (alto < Math.max(altoDerecha(aLaDerecha), altoIzquierda(datos.length - aLaDerecha))) aLaDerecha = k;
+  }
+  const datosDerecha = datos.slice(0, aLaDerecha);
+  const datosIzquierda = datos.slice(aLaDerecha);
+  const cardH = Math.max(76, altoDerecha(datosDerecha.length), altoIzquierda(datosIzquierda.length));
   for (const cx of [MARGIN, MARGIN + cardW + gap]) {
     roundRect(cx, cardTop, cardW, cardH, 6, { fill: C.cardBg, border: C.cardBorder, borderW: 0.8 });
   }
@@ -314,18 +383,24 @@ export async function generateBoletaElectronicaPdf(input) {
   text(`RUT ${rcp.rut ? fmtRut(rcp.rut) : "—"}`, MARGIN + 12, cy, 9, font, C.gray);
   cy -= 13;
   if (rcp.direccion) text(String(rcp.direccion).slice(0, 48), MARGIN + 12, cy, 9, font, C.gray);
+  cy -= 18;
+  for (const [label, value] of datosIzquierda) {
+    text(`${label}: `, MARGIN + 12, cy, 9, bold, C.gray);
+    text(String(value), MARGIN + 12 + bold.widthOfTextAtSize(`${label}: `, 9), cy, 9, font, C.black);
+    cy -= filaDato;
+  }
   // Datos de la boleta
   const dX = MARGIN + cardW + gap + 12;
   let dy = cardTop - 18;
   text("DATOS DE LA BOLETA", dX, dy, 7.5, bold, C.brandGreen);
   dy -= 16;
-  for (const [label, value] of datos) {
+  for (const [label, value] of datosDerecha) {
     text(`${label}: `, dX, dy, 9, bold, C.gray);
     text(String(value), dX + bold.widthOfTextAtSize(`${label}: `, 9), dy, 9, font, C.black);
-    dy -= 14;
+    dy -= filaDato;
   }
 
-  y = cardTop - cardH - 16;
+  y = cardTop - cardH - sp.seccion;
 
   // ── Tabla de lectura de medidor (opcional, agua) ─────────────────────────
   if (input.lectura) {
@@ -364,7 +439,7 @@ export async function generateBoletaElectronicaPdf(input) {
       textC(fmtFechaCorta(fechas[i]), MARGIN + colW * (i + 0.5), y - 21, 7.5, font, C.grayLabel);
     }
     page.drawLine({ start: { x: MARGIN, y: y - 20 - subH }, end: { x: RIGHT, y: y - 20 - subH }, thickness: 0.6, color: C.line });
-    y -= 34 + subH;
+    y -= 20 + subH + sp.seccion;
     // Unidades a abonar/restar en futuras facturaciones (período sin lectura).
     const abonar = Number(L.unidadesAbonar) || 0;
     if (abonar !== 0) {
@@ -386,18 +461,20 @@ export async function generateBoletaElectronicaPdf(input) {
   textC("Cantidad", col.cant + 25, y - 9, 9, bold, C.white);
   textR("Valor unitario", col.vu + 70, y - 9, 9, bold, C.white);
   textR("Total", col.tot, y - 9, 9, bold, C.white);
-  y -= 26;
+  // Barra de 20pt que termina en y-16: la primera fila va 15pt más abajo, con
+  // el mismo aire sobre la letra que el que queda bajo ella hasta la regla.
+  y -= 31;
   for (const it of input.items || []) {
     const valor = it.valor != null ? Number(it.valor) : Number(it.cantidad) * Number(it.precio);
     text(String(it.nombre ?? "").slice(0, 56), col.desc, y, 10, font, C.black);
     textC(fmtCant(it.cantidad), col.cant + 25, y, 10, font, C.black);
     textR(fmtCLP(it.precio), col.vu + 70, y, 10, font, C.black);
     textR(fmtCLP(valor), col.tot, y, 10, font, C.black);
-    y -= 11;
+    y -= 9;
     page.drawLine({ start: { x: MARGIN, y }, end: { x: RIGHT, y }, thickness: 0.4, color: C.line });
-    y -= 11;
+    y -= 15;
   }
-  y -= 6;
+  y += 15 - sp.seccion;
 
   // ── Totales (derecha) ────────────────────────────────────────────────────
   const t = input.totales || {};
@@ -412,12 +489,74 @@ export async function generateBoletaElectronicaPdf(input) {
     const f = opts.bold ? bold : font;
     text(label, totLabelX, y, 9.5, f, opts.bold ? C.deepGreen : C.gray);
     if (val != null && val !== "") textR(String(val), RIGHT, y, 9.5, f, C.black);
-    y -= 13;
     if (opts.sub) {
-      text(String(opts.sub).slice(0, 60), totLabelX + 8, y + 2, 7.5, font, C.grayLabel);
-      y -= 10;
+      // La línea de detalle va pegada a SU fila, y la que sigue toma distancia:
+      // a medio camino no se sabía de cuál de las dos era.
+      y -= sp.sub;
+      text(String(opts.sub).slice(0, 60), totLabelX + 8, y, 7.5, font, C.grayLabel);
+      y -= sp.trasSub;
+    } else {
+      y -= sp.fila;
     }
   };
+
+  // ── Panel izquierdo: historial y tarifario (opcionales) ──────────────────
+  // La columna a la izquierda de los totales queda vacía hasta el timbre. Ahí
+  // van, si el emisor los manda, el consumo de los últimos meses en barras y su
+  // tarifa vigente. El render no sabe de agua: dibuja puntos y filas.
+  const panelX = MARGIN;
+  const panelW = totLabelX - MARGIN - 20;
+  let panelY = y;
+  const puntos = (Array.isArray(rep.historial?.puntos) ? rep.historial.puntos : [])
+    .filter((p) => p && Number.isFinite(Number(p.valor)) && Number(p.valor) >= 0)
+    .slice(-12);
+  if (puntos.length >= 2 && nivel < 4) {
+    // La unidad va junto al título: suelta en la otra esquina no se leía de qué era.
+    const unidad = String(rep.historial.unidad || "").slice(0, 6);
+    const tituloHist = String(rep.historial.titulo || "Historial").slice(0, 46);
+    text(tituloHist, panelX, panelY, 8, bold, C.brandGreen);
+    if (unidad) {
+      text(` (${unidad})`, panelX + bold.widthOfTextAtSize(tituloHist, 8), panelY, 8, font, C.grayLabel);
+    }
+    panelY -= 10;
+    const chartH = 46;
+    const slot = panelW / puntos.length;
+    const barW = Math.min(14, slot * 0.62);
+    const max = Math.max(...puntos.map((p) => Number(p.valor)), 0);
+    // Línea de base: una barra de 0 se ve como "sin consumo", no como un hueco.
+    const baseY = panelY - 8 - chartH;
+    page.drawLine({ start: { x: panelX, y: baseY }, end: { x: panelX + panelW, y: baseY }, thickness: 0.6, color: C.line });
+    puntos.forEach((p, i) => {
+      const v = Number(p.valor);
+      const h = max > 0 ? Math.max(v > 0 ? 1.5 : 0, (v / max) * chartH) : 0;
+      const cx = panelX + slot * (i + 0.5);
+      const last = i === puntos.length - 1;
+      if (h > 0) {
+        page.drawRectangle({
+          x: cx - barW / 2, y: baseY, width: barW, height: h,
+          color: last ? C.brandGreen : C.cardBorder,
+        });
+      }
+      // El valor arriba de su barra: el gráfico se lee sin eje.
+      textC(fmtCant(v), cx, baseY + h + 2, 6, last ? bold : font, last ? C.deepGreen : C.gray);
+      textC(String(p.etiqueta ?? "").slice(0, 4), cx, baseY - 8, 6, last ? bold : font, C.gray);
+    });
+    panelY = baseY - 26;
+  }
+  const filasTarifa = (Array.isArray(rep.tarifario?.filas) ? rep.tarifario.filas : [])
+    .filter((f) => f && f.label && f.valor)
+    .slice(0, 10);
+  if (filasTarifa.length > 0 && nivel < 3) {
+    text(String(rep.tarifario.titulo || "Tarifas").slice(0, 46), panelX, panelY, 8, bold, C.brandGreen);
+    panelY -= 12;
+    for (const f of filasTarifa) {
+      text(String(f.label).slice(0, 46), panelX, panelY, 7.5, font, C.gray);
+      textR(String(f.valor).slice(0, 24), panelX + panelW, panelY, 7.5, font, C.black);
+      panelY -= 10.5;
+    }
+    panelY -= 4;
+  }
+  const conPanel = panelY < y;
 
   // ── Bloques del emisor ───────────────────────────────────────────────────
   // El render no sabe qué significan: dibuja etiqueta + valor ya formateado.
@@ -431,7 +570,9 @@ export async function generateBoletaElectronicaPdf(input) {
     for (const fila of b.filas) {
       if (!fila || !fila.label) continue;
       if (fila.enfasis) {
-        page.drawLine({ start: { x: totLabelX, y: y + 9 }, end: { x: RIGHT, y: y + 9 }, thickness: 0.5, color: C.line });
+        // La regla va en el aire extra, no rozando la fila de arriba.
+        y -= sp.corte;
+        page.drawLine({ start: { x: totLabelX, y: y + 10 }, end: { x: RIGHT, y: y + 10 }, thickness: 0.5, color: C.line });
       }
       money(String(fila.label).slice(0, 46), fila.valor, { bold: !!fila.enfasis, sub: fila.sub });
     }
@@ -449,7 +590,11 @@ export async function generateBoletaElectronicaPdf(input) {
   y -= 10;
   text("TOTAL A PAGAR", totLabelX, y, 12, bold, C.deepGreen);
   textR(fmtCLP(t.total), RIGHT, y, 14, bold, C.deepGreen);
-  y -= 14;
+  // 15pt: la nota de abajo corre por la izquierda, bajo el rótulo del total.
+  y -= 15;
+  // Lo que sigue (notas y timbre) va bajo lo MÁS bajo de las dos columnas: con
+  // pocos cargos, el panel izquierdo termina más abajo que los totales.
+  if (conPanel) y = Math.min(y, panelY);
   // Notas del emisor: van a la IZQUIERDA y NO suman al total (p.ej. un acuse de
   // pagos recibidos, que informa pero no cobra).
   for (const nota of Array.isArray(rep.notas) ? rep.notas : []) {
@@ -457,7 +602,7 @@ export async function generateBoletaElectronicaPdf(input) {
     text(String(nota).slice(0, 118), MARGIN, y, 8, font, C.grayLabel);
     y -= 10;
   }
-  const afterTotalsY = y - 2;
+  let afterTotalsY = y - 2;
 
   // ── Timbre PDF417 (izquierda) ────────────────────────────────────────────
   // Tamaño: X Dim objetivo (> mínimo SII 6.7), acotado por la envolvente ≤9×3 cm.
@@ -475,6 +620,20 @@ export async function generateBoletaElectronicaPdf(input) {
   const xDimMils = sc * MILS_PER_PT;
   const QZ = 14;
   const tbX = MARGIN + QZ;
+  // ¿Cabe el timbre con su zona quieta, y debajo la franja y el pie? Lo que
+  // ocupa hacia abajo: la zona quieta de arriba, el código (o las tres líneas
+  // de su leyenda, si son más altas), la de abajo y 16pt de aire.
+  const reservaPie = 12 +
+    (input.watermarkNote || input.watermark ? 11 : 0) +
+    (input.vencimiento || rep.leyendaVencimiento ? 42 : 0);
+  const aireBajoTimbre = sp.aire;
+  const altoTimbre = QZ + Math.max(drawH + QZ, 29) + aireBajoTimbre;
+  let desborda = afterTotalsY - altoTimbre < reservaPie;
+  if (desborda && nivel >= NIVEL_SEGUNDA_HOJA) {
+    page = doc.addPage([PAGE_W, PAGE_H]);
+    afterTotalsY = PAGE_H - MARGIN;
+    desborda = false;
+  }
   const tbTop = afterTotalsY - QZ;
   page.drawRectangle({
     x: tbX - QZ, y: tbTop - drawH - QZ, width: drawW + 2 * QZ, height: drawH + 2 * QZ, color: C.white,
@@ -492,13 +651,26 @@ export async function generateBoletaElectronicaPdf(input) {
   text(`Folio ${input.folio} · DTE ${tipoDte} · ${String(input.emisor.razonSocial || "").slice(0, 42)}`, capX, capY, 7.5, font, C.gray);
 
   // Punto más bajo de la fila del timbre (incluye la quiet zone inferior).
-  let belowY = Math.min(tbTop - drawH - QZ, capY) - 16;
+  let belowY = Math.min(tbTop - drawH - QZ, capY) - aireBajoTimbre;
+
+  // La nota al pie ya no exige diagonal: con watermark cae al default de demo;
+  // sin watermark se renderiza sola (branding de tenants white-label).
+  const nota = input.watermarkNote ||
+    (input.watermark
+      ? "DOCUMENTO DE DEMOSTRACIÓN con datos de muestra — no constituye boleta tributaria válida."
+      : null);
+  // El pie no se sale de la hoja. Con una boleta larga (tramos + subsidio +
+  // contacto) la línea legal caía a 8pt del borde y la nota quedaba cortada. Se
+  // reserva abajo lo que ocupan la franja y el pie, y lo que falte sale del aire
+  // bajo el timbre (16pt, sin tocar su quiet zone).
+  const conFranja = Boolean(input.vencimiento || rep.leyendaVencimiento);
+  belowY = Math.max(belowY, 12 + (nota ? 11 : 0) + (conFranja ? 42 : 0));
 
   // ── Franja de vencimiento (opcional) ─────────────────────────────────────
   // `leyendaVencimiento` REEMPLAZA la fecha (no la acompaña) — un servicio
   // sanitario pone ahí "Corte en trámite". Por eso la franja también se dibuja
   // cuando hay leyenda y no hay fecha.
-  if (input.vencimiento || rep.leyendaVencimiento) {
+  if (conFranja) {
     const stripH = 30;
     const stripTop = belowY;
     roundRect(MARGIN, stripTop, CONTENT_W, stripH, 5, { fill: C.cardBg, border: C.cardBorder, borderW: 0.8 });
@@ -538,15 +710,9 @@ export async function generateBoletaElectronicaPdf(input) {
   const viaPlataforma = plataforma ? ` y declarado al SII a través de ${plataforma}` : "";
   const legal = `Documento tributario electrónico emitido por ${emisorNombre}${viaPlataforma}${leyRef}.`;
   textC(legal, PAGE_W / 2, belowY, 7.5, font, C.grayLabel);
-  // La nota al pie ya no exige diagonal: con watermark cae al default de demo;
-  // sin watermark se renderiza sola (branding de tenants white-label).
-  const nota = input.watermarkNote ||
-    (input.watermark
-      ? "DOCUMENTO DE DEMOSTRACIÓN con datos de muestra — no constituye boleta tributaria válida."
-      : null);
   if (nota) {
     textC(String(nota).slice(0, 110), PAGE_W / 2, belowY - 11, 7.5, font, C.grayLabel);
   }
 
-  return { pdf: await doc.save(), xDimMils };
+  return { pdf: await doc.save(), xDimMils, desborda };
 }

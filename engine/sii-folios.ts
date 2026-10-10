@@ -74,6 +74,7 @@
 // ============================================================================
 
 import { extractPemFromPkcs12 } from "./pkcs12.ts";
+import { cuerpoSii } from "./texto-sii.ts";
 
 const AUTH_ENDPOINT = "https://herculesr.sii.cl/cgi_AUT2000/CAutInicio.cgi";
 const SII_USER_AGENT = "Mozilla/4.0 (compatible; PROG 1.0; rural-saas-dte)";
@@ -177,11 +178,29 @@ export function parseSiiFolioErrorPage(body: string): { code: string | null } | 
  * @returns El `action` tal cual viene en el atributo (`""` si el form no lo trae o si no hay
  * form; resuélvelo con `SiiSession.abs`) y los campos listos para re-postear.
  */
-export function parseForm(html: string): { action: string; fields: Record<string, string> } {
-  const formMatch = html.match(/<form\b[^>]*>([\s\S]*?)<\/form>/i);
-  const formTag = html.match(/<form\b[^>]*>/i)?.[0] ?? "";
+export function parseForm(
+  html: string,
+  opts: { conCampo?: string } = {},
+): { action: string; fields: Record<string, string> } {
+  // Con `conCampo`, el form que se lee es el primero que TIENE ese campo (input o
+  // select), no el primero de la página: un formulario extra antes (un buscador en el
+  // encabezado) dejaba afuera los campos de la solicitud y mandaba el POST al `action`
+  // equivocado. Si ninguno lo tiene, se lee el primero, como siempre.
+  const forms = [...html.matchAll(/<form\b[^>]*>[\s\S]*?<\/form>/gi)].map((m) => m[0]);
+  const campo = opts.conCampo?.toLowerCase();
+  const elegido = campo
+    ? forms.find((f) =>
+      [...f.matchAll(/<(?:input|select)\b[^>]*>/gi)].some((t) =>
+        t[0].match(/name\s*=\s*["']?([^"'\s>]+)/i)?.[1]?.toLowerCase() === campo
+      )
+    )
+    : undefined;
+  const formHtml = elegido ?? forms[0];
+  // Sin ningún form cerrado se comporta como antes: el action del primer <form> y los
+  // campos de toda la página.
+  const formTag = (formHtml ?? html).match(/<form\b[^>]*>/i)?.[0] ?? "";
   const action = formTag.match(/action\s*=\s*["']?([^"'\s>]+)/i)?.[1] ?? "";
-  const inner = formMatch?.[1] ?? html;
+  const inner = formHtml ? formHtml.replace(/^<form\b[^>]*>/i, "").replace(/<\/form>$/i, "") : html;
   const fields: Record<string, string> = {};
   // inputs (text/hidden/select Y submit). El submit se INCLUYE: el cvc_cgi confirma
   // el timbraje con un botón (ej. ACEPTAR="Confirmar Folio Inicial" en el 1er timbraje
@@ -205,6 +224,86 @@ export function parseForm(html: string): { action: string; fields: Record<string
     fields[name] = sel?.[1] ?? "";
   }
   return { action, fields };
+}
+
+/** Texto plano corto de una página del SII, para explicar una respuesta inesperada. */
+export function extractoTexto(html: string, max = 280): string {
+  const ent: Record<string, string> = {
+    aacute: "á", eacute: "é", iacute: "í", oacute: "ó", uacute: "ú", ntilde: "ñ",
+    Aacute: "Á", Eacute: "É", Iacute: "Í", Oacute: "Ó", Uacute: "Ú", Ntilde: "Ñ",
+    nbsp: " ", amp: "&", quot: '"', deg: "°",
+  };
+  const t = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&([a-zA-Z]+);/g, (m, e: string) => ent[e] ?? m)
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!t) return "(página vacía)";
+  return t.length > max ? `${t.slice(0, max)}…` : t;
+}
+
+/** Prefijo del motivo cuando el SII le niega el timbraje al contribuyente. */
+export const SII_NO_AUTORIZA = "el SII no autoriza timbraje electrónico";
+
+/**
+ * Si la página del SII niega el timbraje ("NO SE AUTORIZA TIMBRAJE…" / "NO AUTORIZA
+ * TIMBRAJE…"), devuelve el texto desde esa frase, con la razón que da el SII.
+ */
+export function motivoSiiNoAutoriza(html: string, max = 400): string | null {
+  const t = extractoTexto(html, Number.MAX_SAFE_INTEGER);
+  const i = t.search(/NO\s+(SE\s+)?AUTORIZA\s+TIMBRAJE/i);
+  if (i < 0) return null;
+  const desde = t.slice(i);
+  return desde.length > max ? `${desde.slice(0, max)}…` : desde;
+}
+
+/**
+ * Lee el cupo de la página `of_solicita_folios_dcto` recargada con el tipo: MAX_AUTOR
+ * (máximo a timbrar AHORA) y FOLIOS_DISP (sin usar). Busca los campos en TODA la
+ * página, no solo en el primer form. Cuando MAX_AUTOR no está, `motivo` dice qué mostró
+ * el SII: un cupo null sin explicación no distingue "el SII no lo informa para este
+ * tipo" de "cambió la página" ni de "este certificado no puede pedir folios". Pasó el
+ * 2026-09-25: la primera corrida del autopilot en producción volvió con null en los
+ * cinco tipos, sin error, y no repuso nada.
+ */
+export function leerCupoSolicitud(
+  status: number,
+  html: string,
+): { maxTimbrar: number | null; foliosSinUsar: number | null; motivo: string | null } {
+  const campo = (nombre: string): { presente: boolean; valor: number | null } => {
+    for (const m of html.matchAll(/<input\b[^>]*>/gi)) {
+      const tag = m[0];
+      if (tag.match(/name\s*=\s*["']?([^"'\s>]+)/i)?.[1]?.toUpperCase() !== nombre) continue;
+      const vm = tag.match(/value\s*=\s*["']([^"']*)["']/i) ?? tag.match(/value\s*=\s*([^\s>"']+)/i);
+      const n = parseInt((vm?.[1] ?? "").trim(), 10);
+      return { presente: true, valor: Number.isFinite(n) ? n : null };
+    }
+    return { presente: false, valor: null };
+  };
+  const max = campo("MAX_AUTOR");
+  const disp = campo("FOLIOS_DISP");
+  if (max.valor != null) return { maxTimbrar: max.valor, foliosSinUsar: disp.valor, motivo: null };
+  // El SII niega el timbraje al contribuyente (no al tipo): la página trae "NO SE
+  // AUTORIZA TIMBRAJE ELECTRÓNICO Sr. Contribuyente…" y la razón va DESPUÉS del
+  // encabezado genérico. Con el extracto de los primeros 280 caracteres el motivo se
+  // cortaba justo en "Sr…" y nadie podía saber qué pedía el SII (30-sep-2026, folios
+  // de la plataforma). Se cita desde esa frase.
+  const negado = motivoSiiNoAutoriza(html);
+  if (negado) {
+    return {
+      maxTimbrar: null,
+      foliosSinUsar: disp.valor,
+      motivo: `${SII_NO_AUTORIZA} (HTTP ${status}): "${negado}"`,
+    };
+  }
+  return {
+    maxTimbrar: null,
+    foliosSinUsar: disp.valor,
+    motivo: `la página de solicitud del SII (HTTP ${status}) ` +
+      `${max.presente ? "trae MAX_AUTOR vacío" : "no trae MAX_AUTOR"}: "${extractoTexto(html)}"`,
+  };
 }
 
 /** Extrae el CAF (<AUTORIZACION>…</AUTORIZACION>) si está en la respuesta. */
@@ -257,12 +356,33 @@ function makeMtlsClient(pfxBase64: string, pfxPassword: string, trace: TraceEntr
   }
 }
 
+/** Cuánto se espera cada paso contra el portal de folios del SII. */
+const PLAZO_POR_PASO_MS = 30_000;
+/**
+ * Los pasos que OTORGAN folios esperan más. Cortar uno de esos no es como cortar una
+ * lectura: el SII pudo haber timbrado, y quedarían folios otorgados sin su CAF.
+ */
+const PLAZO_AL_OTORGAR_MS = 120_000;
+
+/**
+ * El plazo de un paso, por su nombre: los que otorgan folios (`post_confirma` y los
+ * `post_confirmN` que lo siguen) esperan más. Va por nombre para que un paso nuevo de
+ * esa cadena lo herede; `sii-folios.test.ts` exige que todo paso posterior a
+ * `reachedGrant = true` se llame así.
+ */
+export function plazoDelPaso(step: string): number {
+  return step.startsWith("post_confirm") ? PLAZO_AL_OTORGAR_MS : PLAZO_POR_PASO_MS;
+}
+
 /** Sesión con jar de cookies fresco sobre un cliente mTLS dado. */
 function makeSession(client: unknown, base: string, trace: TraceEntry[]): SiiSession {
   const jar = new Map<string, string>();
   const cookieHeader = () => [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
   const fetchFn = async (step: string, url: string, init: RequestInit = {}): Promise<SiiResponse> => {
     const resp = await fetch(url, {
+      // Cada paso con plazo: el portal de folios a veces deja la conexión abierta sin
+      // contestar, y quien pide folios (el envío, el autopilot) quedaba colgado con él.
+      signal: AbortSignal.timeout(plazoDelPaso(step)),
       ...init,
       headers: {
         "User-Agent": SII_USER_AGENT,
@@ -281,7 +401,8 @@ function makeSession(client: unknown, base: string, trace: TraceEntry[]): SiiSes
       const eq = nv.indexOf("=");
       if (eq > 0) jar.set(nv.slice(0, eq).trim(), nv.slice(eq + 1).trim());
     }
-    const body = await resp.text().catch(() => "");
+    // No `resp.text()`: el portal responde ISO-8859-1 y el CAF también. Ver texto-sii.ts.
+    const body = await cuerpoSii(resp).catch(() => "");
     // Captura para diagnóstico (dte_cert_sii_log): el cuerpo de RESPUESTA y el de la
     // REQUEST (qué POSTeamos). Las páginas cvc_cgi son chicas (<5KB) → se guardan
     // enteras; solo se truncan (cabeza+cola) respuestas patológicamente grandes.
@@ -383,7 +504,9 @@ export async function requestCafViaRuralDte(
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ RUT_EMP: rut, DV_EMP: dv ?? "0", ACEPTAR: "Continuar" }).toString(),
     });
-    dctoForm = parseForm(dcto.body);
+    // conCampo: el form de la solicitud es el que tiene COD_DOCTO, aunque la página
+    // traiga otro antes (sin esto el grant se posteaba al action equivocado).
+    dctoForm = parseForm(dcto.body, { conCampo: "COD_DOCTO" });
     if (!dctoForm.action) {
       throw new Error("no se encontró el form de tipo/cantidad (¿RUT no autorizado a timbrar?)");
     }
@@ -407,7 +530,7 @@ export async function requestCafViaRuralDte(
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams(reloadFields).toString(),
     });
-    const reloadForm = parseForm(reload.body);
+    const reloadForm = parseForm(reload.body, { conCampo: "COD_DOCTO" });
     if (reloadForm.action) dctoForm = reloadForm;
   } catch (err) {
     if (err instanceof RuralDteFolioError) throw err;
@@ -605,6 +728,8 @@ export type ConsultaFolioResult = {
   maxTimbrar?: number | null;
   /** Folios disponibles / sin usar según el SII (FOLIOS_DISP). null = no leído. */
   foliosSinUsar?: number | null;
+  /** Por qué `maxTimbrar` quedó null (qué mostró el SII, o qué falló). null = se leyó. */
+  maxTimbrarMotivo?: string | null;
 };
 
 /** Parsea la respuesta de of_consulta2_folio. Tres formas: tabla con timbrajes,
@@ -669,6 +794,7 @@ export async function consultarFoliosViaRuralDte(args: {
     for (let pagina = 1; pagina <= 12; pagina++) {
       let body = "";
       let ok = false;
+      let finDeLaLista = false;
       for (let attempt = 0; attempt < 2 && !ok; attempt++) {
         try {
           const r = await session.fetch("consulta2", session.abs("/cvc_cgi/dte/of_consulta2_folio"), {
@@ -682,6 +808,19 @@ export async function consultarFoliosViaRuralDte(args: {
               ACEPTAR: "Consultar",
             }).toString(),
           });
+          // "Habilitado" se lee de que la página NO diga "no tiene habilitado". Una
+          // respuesta con error o vacía (el portal en mantención, un cuerpo que no se
+          // pudo leer) tampoco lo dice, y salía como tipo habilitado sin timbrajes.
+          // En la PRIMERA página eso no es una respuesta: se reintenta y, si sigue
+          // igual, la consulta falla. De la segunda en adelante es distinto: ya se
+          // sabe que el tipo está habilitado y hay timbrajes leídos, y una página
+          // siguiente vacía o con error termina la lista con lo que hay (así era
+          // antes, y quien pide folios depende de que esta consulta conteste).
+          const sinRespuesta = r.status >= 400 || r.body.trim() === "";
+          if (sinRespuesta && pagina === 1) {
+            throw new Error(r.status >= 400 ? `el SII contestó HTTP ${r.status}` : "el SII contestó sin contenido");
+          }
+          finDeLaLista = sinRespuesta;
           body = r.body;
           ok = true;
         } catch (err) {
@@ -695,6 +834,7 @@ export async function consultarFoliosViaRuralDte(args: {
           }
         }
       }
+      if (finDeLaLista) break; // página 2 o posterior sin respuesta: queda lo leído
       const parsed = parseConsulta(body);
       enabled = parsed.enabled;
       documentName = parsed.documentName;
@@ -727,7 +867,13 @@ export async function consultarFoliosViaRuralDte(args: {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ RUT_EMP: rut, DV_EMP: dv ?? "0", ACEPTAR: "Continuar" }).toString(),
     });
-    const baseFields = parseForm(rutResp.body).fields;
+    const baseFields = parseForm(rutResp.body, { conCampo: "COD_DOCTO" }).fields;
+    // Si el paso RUT no mostró el form de tipo/cantidad, esa página ES la explicación
+    // de todos los cupos que siguen (p. ej. el certificado no puede pedir folios).
+    const motivoBase = "COD_DOCTO" in baseFields
+      ? null
+      : `el paso RUT de la solicitud no mostró el formulario de tipo/cantidad (HTTP ${rutResp.status}): ` +
+        `"${extractoTexto(rutResp.body)}"`;
     for (let i = 0; i < args.documentTypes.length; i++) {
       const documentType = args.documentTypes[i];
       const target = results.find((r) => r.documentType === documentType);
@@ -748,17 +894,27 @@ export async function consultarFoliosViaRuralDte(args: {
             body: new URLSearchParams(reloadFields).toString(),
           },
         );
-        const f = parseForm(reload.body).fields;
-        const max = parseInt((f.MAX_AUTOR ?? "").trim(), 10);
-        const disp = parseInt((f.FOLIOS_DISP ?? "").trim(), 10);
+        const cupo = leerCupoSolicitud(reload.status, reload.body);
         if (target) {
-          target.maxTimbrar = Number.isFinite(max) ? max : null;
-          target.foliosSinUsar = Number.isFinite(disp) ? disp : null;
+          target.maxTimbrar = cupo.maxTimbrar;
+          target.foliosSinUsar = cupo.foliosSinUsar;
+          target.maxTimbrarMotivo = cupo.maxTimbrar == null ? (motivoBase ?? cupo.motivo) : null;
+        }
+        if (cupo.maxTimbrar == null) {
+          session.trace.push({
+            step: `solicita_doc_${documentType}_sin_max`,
+            status: reload.status,
+            url: session.abs("/cvc_cgi/dte/of_solicita_folios_dcto"),
+            body: motivoBase ?? cupo.motivo ?? "",
+          });
         }
       } catch (err) {
         if (target) {
           target.maxTimbrar = null;
           target.foliosSinUsar = null;
+          target.maxTimbrarMotivo = `falló la página de solicitud del SII: ${
+            err instanceof Error ? err.message : String(err)
+          }`;
         }
         // Los null son un resultado legítimo (el SII no expuso los cupos), pero sin
         // dejar el motivo NO se distingue "no los expuso" de "se cayó la página".
@@ -776,6 +932,13 @@ export async function consultarFoliosViaRuralDte(args: {
     // Best-effort de verdad: los `results` ya están y se devuelven igual. Pero el
     // motivo va al trace en vez de desaparecer — un cupo que llega en null sin
     // explicación manda a buscar el problema al lado equivocado.
+    for (const r of results) {
+      if (r.maxTimbrar == null && !r.maxTimbrarMotivo) {
+        r.maxTimbrarMotivo = `no se pudo abrir la solicitud de folios del SII: ${
+          err instanceof Error ? err.message : String(err)
+        }`;
+      }
+    }
     session.trace.push({
       step: "solicita_cupos_error",
       status: 0,

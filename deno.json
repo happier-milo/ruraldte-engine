@@ -1,6 +1,6 @@
 {
   "name": "@ruraldte/engine",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "license": "Apache-2.0",
   "nodeModulesDir": "none",
   "exports": {
@@ -9,6 +9,7 @@
     "./factura": "./engine/factura-dte.ts",
     "./ted": "./engine/boleta-ted.ts",
     "./firma": "./engine/xml-signature.ts",
+    "./rsa-firma": "./engine/rsa-firma.ts",
     "./c14n": "./engine/c14n.ts",
     "./sobre-boleta": "./engine/envio-boleta.ts",
     "./sobre-dte": "./engine/envio-dte.ts",

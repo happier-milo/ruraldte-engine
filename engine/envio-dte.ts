@@ -63,6 +63,7 @@
 
 import forge from "npm:node-forge@1.3.1";
 import { canonicalize, parseXml } from "./c14n.ts";
+import { firmarRsaSha1 } from "./rsa-firma.ts";
 import { encodeLatin1, sha1Base64, wrapBase64Lines } from "./xml-signature.ts";
 import { extractPemFromPkcs12 } from "./pkcs12.ts";
 
@@ -241,7 +242,6 @@ export function buildEnvioSobre(
 
   // --- firma del SET con C14N real ---
   const { certPem, pkeyPem } = extractPemFromPkcs12(input.pfxBytes, input.password);
-  const privateKey = forge.pki.privateKeyFromPem(pkeyPem);
   const certificate = forge.pki.certificateFromPem(certPem);
 
   // 1) DigestValue del SetDTE (in-envelope, sobre los bytes que emitiremos).
@@ -281,9 +281,9 @@ export function buildEnvioSobre(
   // 4) Ensamblar y firmar el SignedInfo (in-context → hereda xmldsig# + xsi).
   const full = `${head}${setDte}\r\n${signature}</${root}>`;
   const siC14n = canonicalize(setSignedInfo(parseXml(full), root));
-  const md = forge.md.sha1.create();
-  md.update(siC14n, "utf8");
-  const signatureValue = forge.util.encode64(privateKey.sign(md));
+  // La firma nativa, comprobada contra forge (rsa-firma.ts). En un sobre de una
+  // factura es la mitad de las firmas RSA del envío.
+  const signatureValue = firmarRsaSha1(pkeyPem, siC14n);
 
   const xml = full.replace(PLACEHOLDER, signatureValue);
 

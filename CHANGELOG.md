@@ -3,6 +3,55 @@
 Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) ·
 Versionado [SemVer](https://semver.org/lang/es/).
 
+## [0.6.0] — 2026-10-09
+
+### Añadido
+- **`rsa-firma`** — la firma RSA-SHA1 de cada DTE y de cada sobre sale por la
+  implementación nativa del runtime (`node:crypto`) en vez de la de node-forge, que es
+  JavaScript puro. La firma
+  es la misma, byte a byte (PKCS#1 v1.5 es determinista); lo que cambia es el costo.
+  Medido con una clave de 2048 bits: 19,6 ms de CPU por firma en forge contra 1,7 ms en
+  la nativa. Firmar una boleta baja de unos 23 ms de CPU a unos 5, y un sobre de 50
+  boletas, de 1,1 segundos a menos de 0,3.
+
+  No se confía en que sean iguales: la primera firma con cada clave se calcula de las
+  dos maneras y se comparan. Si no coinciden, o el runtime no trae RSA-SHA1, firma
+  forge de ahí en adelante y `estadoFirmaNativa()` dice por qué. `buildSignedBoletaDte`,
+  `buildSignedFacturaDte`, `buildEnvioBoleta` y `buildEnvioDte` no cambian de firma ni
+  de salida. Emitir una factura (el DTE y su sobre) baja de 53 a 18 ms de CPU.
+
+  Importa si firmas por lotes: el SII admite hasta 500 boletas por envío y recomienda
+  50, y con la firma en JavaScript un sobre de ese tamaño no cabía en el tope de CPU de
+  una función serverless.
+- **`texto-sii`** — lo que viene del SII se decodifica por bytes (UTF-8 estricto y, si
+  no lo es, ISO-8859-1), no con `Response.text()`. El portal de folios contesta en
+  ISO-8859-1 y con `text()` las tildes y la Ñ llegaban como U+FFFD.
+
+- **Descuentos y recargos globales en boletas** (`descuentosGlobales` en
+  `buildBoletaDocumento` y `buildSignedBoletaDte`): hasta 20 líneas `<DscRcgGlobal>`,
+  en porcentaje o en pesos, con su indicador de exención. Es opcional; sin el campo el
+  documento sale igual que antes. Los totales los sigue pasando quien llama, ya
+  ajustados. Aporte de [@vbastianpc](https://github.com/vbastianpc).
+- **`parseBoletaStatus` y `parseEnvioBoletaStatus`** (`sii-status`, también desde
+  `sii-client`): leen las respuestas de estado de una boleta y de un envío sin lanzar
+  por cambios en el cuerpo del SII. Recuperan lo que reconocen sin convertir tipos,
+  conservan el cuerpo original y dicen qué faltó o vino distinto. No infieren
+  aceptación. `getEnvioStatus` y `getBoletaStatus` pueden devolver además el
+  `Content-Type`. Aporte de [@vbastianpc](https://github.com/vbastianpc).
+- **`engine/sii-openapi/openapi.yaml`** — la definición OpenAPI del canal de boletas
+  del SII (versión 1.0.5), como referencia, y `scripts/fetch-sii-openapi.sh` para
+  bajarla de nuevo. Es del SII y no está cubierta por la licencia de este repositorio:
+  ver `NOTICE`. Aporte de [@vbastianpc](https://github.com/vbastianpc).
+
+### Corregido
+- **`getBoletaStatus`** — el comentario decía que la fecha de emisión va como
+  AAAA-MM-DD. El openapi del SII pide DD-MM-YYYY.
+- **`sii-folios`** — la sesión con el portal de folios decodifica con `texto-sii`: el
+  CAF y las páginas conservan la Ñ y las tildes. Cuando el SII niega el timbraje ("NO
+  SE AUTORIZA TIMBRAJE…"), el motivo se cita desde esa frase (`motivoSiiNoAutoriza`):
+  antes se cortaba en el encabezado genérico, justo antes de la razón. Y la solicitud
+  de folios se lee del formulario que trae el campo buscado, no del primero de la página.
+
 ## [0.5.0] — 2026-09-20
 
 ### Quitado

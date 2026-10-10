@@ -46,6 +46,7 @@
 // ============================================================================
 
 import type { GlobalTable } from "./sii-client.ts";
+import { chileDayOf } from "./dia-de-chile.ts";
 
 // ---------------------------------------------------------------------------
 // CAF
@@ -111,9 +112,9 @@ export function evaluateCaf(
   if (caf.expires_at) {
     daysToExpiry = Math.floor((new Date(caf.expires_at).getTime() - nowMs) / 86_400_000);
     if (daysToExpiry < 0) {
-      reasons.push(`CAF VENCIDO hace ${-daysToExpiry}d (${caf.expires_at.slice(0, 10)})`);
+      reasons.push(`CAF VENCIDO hace ${-daysToExpiry}d (${chileDayOf(caf.expires_at)})`);
     } else if (daysToExpiry <= CAF_EXPIRY_WARN_DAYS) {
-      reasons.push(`CAF vence en ${daysToExpiry}d (${caf.expires_at.slice(0, 10)})`);
+      reasons.push(`CAF vence en ${daysToExpiry}d (${chileDayOf(caf.expires_at)})`);
     }
   }
   if (remaining <= CAF_LOW_FOLIOS) {
