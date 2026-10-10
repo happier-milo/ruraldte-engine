@@ -16,6 +16,7 @@ import {
   getEnvioStatus,
   parseBoletaStatus,
   parseEnvioBoletaStatus,
+  parseRetryAfter,
   getSemilla,
   getToken,
   parseSemilla,
@@ -271,4 +272,12 @@ Deno.test("consultas de estado: los errores de transporte siguen propagándose",
   };
   await assertRejects(() => getBoletaStatus("cert", { ...input, tipo: 39, folio: 1 }), Error, "Sin conexión");
   await assertRejects(() => getEnvioStatus("cert", { ...input, trackId: "1014" }), Error, "Sin conexión");
+});
+
+Deno.test("parseRetryAfter: los segundos de X-Retry-After, o null si no es un número de segundos", () => {
+  // Lo que mandó el SII de certificación el 9-oct-2026: "5" con tres boletas, "120" con 61.
+  assertEquals([parseRetryAfter("5"), parseRetryAfter("120"), parseRetryAfter(" 30 "), parseRetryAfter("0")], [5, 120, 30, 0]);
+  for (const malo of [null, undefined, "", "pronto", "-5", "1.5", "Wed, 21 Oct 2026 07:28:00 GMT", "1234567"]) {
+    assertEquals(parseRetryAfter(malo), null, String(malo));
+  }
 });

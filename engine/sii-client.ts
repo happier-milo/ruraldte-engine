@@ -342,7 +342,19 @@ export type SendEnvioResult = {
   trackId: string | null;
   status: number;
   raw: string;
+  /**
+   * Los segundos que el SII pide esperar antes de consultar este envío (cabecera
+   * `X-Retry-After`), o null si no la mandó. Crece con el sobre: en certificación,
+   * el 9-oct-2026, fueron 5 con dos y tres boletas y 120 con 61.
+   */
+  retryAfterS: number | null;
 };
+
+/** `X-Retry-After` como segundos enteros, o null si no viene o no es un número razonable. */
+export function parseRetryAfter(valor: string | null | undefined): number | null {
+  if (valor == null || !/^\s*\d{1,6}\s*$/.test(valor)) return null;
+  return Number(valor.trim());
+}
 
 /** Extrae el TrackID de la respuesta JSON del envío (claves toleradas). */
 export function parseTrackId(raw: string): string | null {
@@ -443,7 +455,12 @@ export async function sendEnvio(env: SiiEnv, input: SendEnvioInput): Promise<Sen
     body: body.buffer as ArrayBuffer,
   });
   const raw = await res.text();
-  return { trackId: res.ok ? parseTrackId(raw) : null, status: res.status, raw };
+  return {
+    trackId: res.ok ? parseTrackId(raw) : null,
+    status: res.status,
+    raw,
+    retryAfterS: parseRetryAfter(res.headers?.get?.("x-retry-after")),
+  };
 }
 
 // ---------------------------------------------------------------------------

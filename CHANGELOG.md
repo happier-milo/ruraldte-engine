@@ -3,6 +3,17 @@
 Formato [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) ·
 Versionado [SemVer](https://semver.org/lang/es/).
 
+## [0.6.2] — 2026-10-10
+
+### Agregado
+- **`sendEnvio` devuelve `retryAfterS`** — los segundos que el SII pide esperar antes de
+  consultar ese envío, leídos de la cabecera `X-Retry-After` de su respuesta (`null` si
+  no la manda). Crece con el sobre: en certificación, el 9-oct-2026, fueron 5 con dos y
+  tres boletas y 120 con 61. Sirve para no esperar un plazo fijo: el texto del SII pide
+  10 minutos, y en la práctica el veredicto estaba antes de los 20 segundos.
+- **`parseRetryAfter`** — lee esa cabecera como segundos enteros. Lo que no es un número
+  de hasta seis dígitos (una fecha HTTP, un texto, un negativo) vuelve `null`.
+
 ## [0.6.1] — 2026-10-09
 
 Lo que contestó el SII de verdad. El 9-oct-2026 se mandaron tres sobres de boletas al
