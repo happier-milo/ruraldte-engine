@@ -76,6 +76,17 @@ import { canonicalize, parseXml } from "./c14n.ts";
 import { sha1Base64 } from "./xml-signature.ts";
 import { extractPemFromPkcs12 } from "./pkcs12.ts";
 
+export { parseBoletaStatus, parseEnvioBoletaStatus } from "./sii-status.ts";
+export type {
+  BoletaStatusData,
+  EnvioBoletaStatusData,
+  EnvioBoletaStatusDetail,
+  EnvioBoletaStatusError,
+  ParsedSiiStatus,
+  SiiStatusResponse,
+} from "./sii-status.ts";
+import type { SiiStatusResponse } from "./sii-status.ts";
+
 const DSIG_NS = "http://www.w3.org/2000/09/xmldsig#";
 const C14N_ALGO = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
 const SIG_ALGO = "http://www.w3.org/2000/09/xmldsig#rsa-sha1";
@@ -447,12 +458,16 @@ export async function getEnvioStatus(
     trackId: string;
     token: string;
     userAgent: string;
+    /** Captura Content-Type solo cuando se solicita; conserva el retorno anterior por defecto. */
+    includeContentType?: boolean;
     fetchFn?: FetchFn;
   },
-): Promise<{ status: number; raw: string }> {
+): Promise<SiiStatusResponse> {
   const fetchFn = input.fetchFn ?? fetch;
   const { rut, dv } = splitRut(input.rutCompany);
-  const url = `${SERVERS[env].base}/boleta.electronica.envio/${rut}-${dv}-${input.trackId}`;
+  const url = `${
+    SERVERS[env].base
+  }/boleta.electronica.envio/${rut}-${dv}-${input.trackId}`;
   const res = await fetchFn(url, {
     method: "GET",
     headers: {
@@ -461,7 +476,13 @@ export async function getEnvioStatus(
       "Accept": "application/json",
     },
   });
-  return { status: res.status, raw: await res.text() };
+  return {
+    status: res.status,
+    raw: await res.text(),
+    ...(input.includeContentType
+      ? { contentType: res.headers.get("content-type") }
+      : {}),
+  };
 }
 
 /** Estado de una boleta por folio. */
@@ -473,16 +494,20 @@ export async function getBoletaStatus(
     folio: number;
     token: string;
     userAgent: string;
-    /** Query: rut/dv receptor, monto, fecha (AAAA-MM-DD) — los exige el endpoint. */
+    /** Query opcional del OpenAPI: rut_receptor, dv_receptor, monto y fechaEmision (DD-MM-YYYY). */
     query?: Record<string, string | number>;
+    /** Captura Content-Type solo cuando se solicita; conserva el retorno anterior por defecto. */
+    includeContentType?: boolean;
     fetchFn?: FetchFn;
   },
-): Promise<{ status: number; raw: string }> {
+): Promise<SiiStatusResponse> {
   const fetchFn = input.fetchFn ?? fetch;
   const { rut, dv } = splitRut(input.rutCompany);
   const qs = input.query
     ? "?" +
-      new URLSearchParams(Object.entries(input.query).map(([k, v]) => [k, String(v)])).toString()
+      new URLSearchParams(
+        Object.entries(input.query).map(([k, v]) => [k, String(v)]),
+      ).toString()
     : "";
   const url = `${
     SERVERS[env].base
@@ -495,7 +520,13 @@ export async function getBoletaStatus(
       "Accept": "application/json",
     },
   });
-  return { status: res.status, raw: await res.text() };
+  return {
+    status: res.status,
+    raw: await res.text(),
+    ...(input.includeContentType
+      ? { contentType: res.headers.get("content-type") }
+      : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------

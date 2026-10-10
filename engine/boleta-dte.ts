@@ -3,13 +3,14 @@
 
 /**
  * Renderiza y firma el `<DTE>` de una boleta electrónica chilena, tipo 39 (afecta) o 41
- * (exenta): Encabezado, Detalle, Referencia opcional, TED y bloque `<Signature>`.
+ * (exenta): Encabezado, Detalle, DscRcgGlobal y Referencia opcionales, TED y `<Signature>`.
  *
  * `buildBoletaDocumento` te devuelve el `<Documento>` compacto sin firmar más su ID (útil
  * si firmas en otro borde); `buildSignedBoletaDte` hace el render y la firma con el `.pfx`
  * en un paso, y el `<Signature>` XMLDSig queda dentro del `<DTE>` referenciando al
  * `<Documento>` por `URI="#ID"`. El módulo no calcula ni cuadra los totales: `totals` lo
- * pasas ya cuadrado y solo se omiten los componentes que no son > 0; de cada ítem deriva
+ * pasas ya cuadrado, incluidos los descuentos/recargos globales, y solo se omiten los
+ * componentes que no son > 0; de cada ítem deriva
  * `PrcItem = round(precio)` y `MontoItem = round(precio * cantidad)` — en boleta el
  * `precio` es BRUTO, con IVA incluido — y trunca EN SILENCIO los textos al largo del XSD
  * (razón social 100, giro 80, dirección 70, comuna 20, nombre del ítem 80). Dos trampas:
@@ -135,6 +136,24 @@ export type BoletaDteTotals = {
   total: number;
 };
 
+/** Descuento o recargo global de boleta (Formato SII v4.2 §D). */
+export type BoletaDscRcgGlobal = {
+  /** "D" = descuento · "R" = recargo. */
+  tipo: "D" | "R";
+  /** "%" = porcentaje · "$" = monto en pesos; en boleta los montos afectos son brutos. */
+  valorTipo: "%" | "$";
+  /** Positivo, hasta dos decimales, representable con precisión segura en centésimas. */
+  valor: number;
+  /** Glosa opcional, hasta 45 caracteres después del saneamiento Latin-1. No se trunca. */
+  glosa?: string;
+  /**
+   * IndExeDR: 1 = exento/no afecto · 2 = no facturable · omitido = afecto.
+   * En boleta 41 debe indicarse 1 o 2. El código 2 no implica soporte completo
+   * de operaciones no facturables en el detalle y los totales de este builder.
+   */
+  exento?: 1 | 2;
+};
+
 /**
  * Referencia opcional del documento; se emite como una sola línea `<Referencia>` con
  * `NroLinRef` 1, en el orden del XSD. `folioRef` solo aparece si además pasas
@@ -194,7 +213,10 @@ export type BoletaDteInput = {
     dirRecep?: string;
   };
   items: BoletaDteItem[];
+  /** Totales finales, ya ajustados por descuentos y recargos globales. */
   totals: BoletaDteTotals;
+  /** Hasta 20 descuentos/recargos globales, en orden; [] omite la sección. */
+  descuentosGlobales?: BoletaDscRcgGlobal[];
   /** Referencia (set de certificación). Opcional en producción. */
   referencia?: BoletaDteReferencia;
   /** CAF XML completo (para el TED). */
@@ -280,6 +302,39 @@ function buildDetalle(item: BoletaDteItem, nroLinea: number): string {
   return `<Detalle>${parts.join("")}</Detalle>`;
 }
 
+function buildDscRcgGlobal(d: BoletaDscRcgGlobal, nroLinea: number, tipoDte: 39 | 41): string {
+  const error = (campo: string): Error =>
+    new Error(`buildBoletaDocumento: descuentosGlobales línea ${nroLinea}: ${campo}`);
+  if (!d || typeof d !== "object" || Array.isArray(d)) {
+    throw error("debe ser un objeto");
+  }
+  if (d.tipo !== "D" && d.tipo !== "R") throw error("tipo debe ser D o R");
+  if (d.valorTipo !== "%" && d.valorTipo !== "$") throw error("valorTipo debe ser % o $");
+  // Dec1Type permite 16 enteros y 2 decimales; number impone además precisión segura.
+  if (
+    !Number.isFinite(d.valor) || d.valor < 0.01 ||
+    !/^\d{1,16}(?:\.\d{1,2})?$/.test(String(d.valor)) ||
+    !Number.isSafeInteger(Math.round(d.valor * 100)) ||
+    Math.round(d.valor * 100) / 100 !== d.valor
+  ) {
+    throw error("valor debe ser positivo, con hasta dos decimales y precisión segura");
+  }
+  if (d.glosa !== undefined && (typeof d.glosa !== "string" || sanitizeSiiText(d.glosa).length > 45)) {
+    throw error("glosa debe ser un texto de hasta 45 caracteres después del saneamiento Latin-1");
+  }
+  if (d.exento !== undefined && d.exento !== 1 && d.exento !== 2) {
+    throw error("exento debe ser 1 o 2");
+  }
+  if (tipoDte === 41 && d.exento === undefined) {
+    throw error("boleta 41 requiere exento=1 (exento/no afecto) o 2 (no facturable)");
+  }
+  const parts = [el("NroLinDR", nroLinea), el("TpoMov", d.tipo)];
+  if (d.glosa) parts.push(el("GlosaDR", d.glosa));
+  parts.push(el("TpoValor", d.valorTipo), el("ValorDR", d.valor));
+  if (d.exento !== undefined) parts.push(el("IndExeDR", d.exento));
+  return `<DscRcgGlobal>${parts.join("")}</DscRcgGlobal>`;
+}
+
 function buildReferencia(ref: BoletaDteReferencia, nroLinea: number): string {
   // Orden XSD boleta: NroLinRef, [TpoDocRef], [FolioRef], [CodRef], [RazonRef].
   // El SET de certificación va en TpoDocRef="SET" + FolioRef=<n° de caso> +
@@ -318,6 +373,17 @@ function buildTedCompact(input: BoletaDteInput): string {
  */
 export function buildBoletaDocumento(input: BoletaDteInput): BuildBoletaDocumentoResult {
   if (input.items.length === 0) throw new Error("buildBoletaDocumento: sin ítems");
+  if (input.descuentosGlobales !== undefined && !Array.isArray(input.descuentosGlobales)) {
+    throw new Error("buildBoletaDocumento: descuentosGlobales debe ser un arreglo");
+  }
+  const descuentosGlobales = input.descuentosGlobales ?? [];
+  if (descuentosGlobales.length > 20) {
+    throw new Error("buildBoletaDocumento: descuentosGlobales admite hasta 20 líneas");
+  }
+  // Array.from también valida posiciones vacías para no generar numeración con saltos.
+  const dscRcgGlobal = Array.from(descuentosGlobales, (d, i) =>
+    buildDscRcgGlobal(d, i + 1, input.tipoDte)
+  ).join("");
   // El atributo ID es xs:ID → NCName: empieza con letra o '_', sin espacios ni
   // ':'. Si arranca con dígito (ej. "39-1") el SII rechaza. Ej. válido "F39T1".
   if (!/^[A-Za-z_][\w.-]*$/.test(input.documentId)) {
@@ -335,6 +401,7 @@ export function buildBoletaDocumento(input: BoletaDteInput): BuildBoletaDocument
     `<Documento ID="${escAttr(input.documentId)}">` +
     encabezado +
     detalles +
+    dscRcgGlobal +
     referencia +
     ted +
     tmstFirma +

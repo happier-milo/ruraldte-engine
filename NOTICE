@@ -21,6 +21,22 @@ titularidad y condiciones de uso son las que determine el SII. Si prefieres no
 redistribuirlos, `scripts/fetch-xsd.sh` los baja desde la fuente.
 
 --------------------------------------------------------------------------------
+Definición OpenAPI del SII (engine/sii-openapi/openapi.yaml)
+--------------------------------------------------------------------------------
+El archivo `engine/sii-openapi/openapi.yaml` es la definición oficial de la API
+de boletas electrónicas del Servicio de Impuestos Internos de Chile (SII),
+publicada por el propio SII en:
+
+  https://www4c.sii.cl/bolcoreinternetui/api/openapi.yaml
+
+Se distribuye aquí sin modificación, con el único fin de servir como referencia
+para integrar la API de boletas electrónicas y sus consultas de estado. NO es
+obra de Comunidad Rural SpA, no está cubierto por la licencia Apache 2.0 de este
+repositorio, y su titularidad y condiciones de uso son las que determine el SII.
+Si prefieres no redistribuirlo, `scripts/fetch-sii-openapi.sh` lo baja desde la
+fuente.
+
+--------------------------------------------------------------------------------
 Marcas
 --------------------------------------------------------------------------------
 "RuralDTE", "Comunidad Rural" y sus logotipos son marcas de Comunidad Rural SpA.

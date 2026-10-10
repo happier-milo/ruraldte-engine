@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Comunidad Rural SpA
 
-import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "jsr:@std/assert@1";
 import forge from "npm:node-forge@1.3.1";
 import {
+  type BoletaDscRcgGlobal,
   type BoletaDteInput,
   buildBoletaDocumento,
   buildSignedBoletaDte,
@@ -12,13 +13,13 @@ import {
 import { sha1Base64, verifyForgeSignature } from "./xml-signature.ts";
 
 // CAF de prueba con par RSA generado (buildTed necesita la RSASK para la FRMT).
-function genCafXml(): string {
+function genCafXml(tipoDte: 39 | 41 = 39): string {
   const kp = forge.pki.rsa.generateKeyPair({ bits: 512 });
   const privPem = forge.pki.privateKeyToPem(kp.privateKey);
   const pubPem = forge.pki.publicKeyToPem(kp.publicKey);
   return (
     `<?xml version="1.0"?><AUTORIZACION><CAF version="1.0"><DA>` +
-    `<RE>78416626-0</RE><RS>COMUNIDAD RURAL SPA</RS><TD>39</TD>` +
+    `<RE>78416626-0</RE><RS>COMUNIDAD RURAL SPA</RS><TD>${tipoDte}</TD>` +
     `<RNG><D>1</D><H>5</H></RNG><FA>2026-06-08</FA>` +
     `<RSAPK><M>abc==</M><E>Aw==</E></RSAPK><IDK>100</IDK></DA>` +
     `<FRMA algoritmo="SHA1withRSA">deadbeef==</FRMA></CAF>` +
@@ -284,4 +285,125 @@ Deno.test("buildSignedBoletaDte: DTE firmado — forma oráculo (Documento prett
 
   // La firma RSA-SHA1 del SignedInfo verifica (roundtrip).
   assert(verifyForgeSignature(dte, publicKey), "la firma del DTE debe verificar");
+});
+
+Deno.test("DscRcgGlobal: omitir movimientos o pasar [] conserva el Documento", () => {
+  const input = caso1Input();
+  const anterior = buildBoletaDocumento(input);
+  assert(!anterior.documento.includes("<DscRcgGlobal>"));
+  assertEquals(buildBoletaDocumento({ ...input, descuentosGlobales: [] }), anterior);
+});
+
+Deno.test("DscRcgGlobal: descuentos y recargos en %/$, orden, indicadores y glosa Latin-1", () => {
+  const input = caso1Input();
+  input.descuentosGlobales = [
+    { tipo: "D", valorTipo: "%", valor: 10.25, glosa: "Promoción — A&B <contado>" },
+    { tipo: "R", valorTipo: "$", valor: 500.29 },
+    { tipo: "D", valorTipo: "$", valor: 0.01, exento: 1, glosa: "A".repeat(45) },
+    { tipo: "R", valorTipo: "%", valor: 150, exento: 2 },
+  ];
+  const { documento } = buildBoletaDocumento(input);
+  const bloques = [...documento.matchAll(/<DscRcgGlobal>[\s\S]*?<\/DscRcgGlobal>/g)]
+    .map((m) => m[0]);
+  assertEquals(bloques, [
+    "<DscRcgGlobal><NroLinDR>1</NroLinDR><TpoMov>D</TpoMov>" +
+      "<GlosaDR>Promoción - A&amp;B &lt;contado&gt;</GlosaDR>" +
+      "<TpoValor>%</TpoValor><ValorDR>10.25</ValorDR></DscRcgGlobal>",
+    "<DscRcgGlobal><NroLinDR>2</NroLinDR><TpoMov>R</TpoMov>" +
+      "<TpoValor>$</TpoValor><ValorDR>500.29</ValorDR></DscRcgGlobal>",
+    "<DscRcgGlobal><NroLinDR>3</NroLinDR><TpoMov>D</TpoMov>" +
+      "<GlosaDR>" + "A".repeat(45) + "</GlosaDR>" +
+      "<TpoValor>$</TpoValor><ValorDR>0.01</ValorDR><IndExeDR>1</IndExeDR></DscRcgGlobal>",
+    "<DscRcgGlobal><NroLinDR>4</NroLinDR><TpoMov>R</TpoMov>" +
+      "<TpoValor>%</TpoValor><ValorDR>150</ValorDR><IndExeDR>2</IndExeDR></DscRcgGlobal>",
+  ]);
+  assert(documento.lastIndexOf("</Detalle>") < documento.indexOf(bloques[0]));
+  assert(documento.indexOf(bloques[3]) < documento.indexOf("<Referencia>"));
+  assert(!documento.includes("<ValorDROtrMnda>"));
+});
+
+Deno.test("DscRcgGlobal: acepta 20 movimientos y rechaza 21 o entradas inválidas", () => {
+  const input = caso1Input();
+  const movimiento: BoletaDscRcgGlobal = { tipo: "D", valorTipo: "%", valor: 10 };
+  input.descuentosGlobales = Array.from({ length: 20 }, () => ({ ...movimiento }));
+  const { documento } = buildBoletaDocumento(input);
+  assertEquals((documento.match(/<DscRcgGlobal>/g) ?? []).length, 20);
+  assertStringIncludes(documento, "<NroLinDR>20</NroLinDR>");
+  input.descuentosGlobales.push(movimiento);
+  assertThrows(() => buildBoletaDocumento(input), Error, "hasta 20 líneas");
+
+  const invalidos: [unknown, string][] = [
+    [null, "arreglo"],
+    [{}, "arreglo"],
+    [[null], "línea 1: debe ser un objeto"],
+    [[[]], "línea 1: debe ser un objeto"],
+    [new Array(1), "línea 1: debe ser un objeto"],
+    [[{ ...movimiento, tipo: "X" }], "tipo debe ser D o R"],
+    [[{ ...movimiento, valorTipo: "EUR" }], "valorTipo debe ser % o $"],
+    ...[0, -1, 0.001, 10.001, NaN, Infinity, -Infinity, 1e16, "10", null]
+      .map((valor): [unknown, string] => [[{ ...movimiento, valor }], "valor debe ser positivo"]),
+    [[{ ...movimiento, glosa: 123 }], "glosa debe ser un texto"],
+    [[{ ...movimiento, glosa: "A".repeat(46) }], "glosa debe ser un texto"],
+    [[{ ...movimiento, glosa: "A".repeat(43) + "…" }], "glosa debe ser un texto"],
+    [[{ ...movimiento, exento: 0 }], "exento debe ser 1 o 2"],
+    [[{ ...movimiento, exento: 3 }], "exento debe ser 1 o 2"],
+  ];
+  for (const [descuentosGlobales, mensaje] of invalidos) {
+    assertThrows(
+      () => buildBoletaDocumento({
+        ...input,
+        descuentosGlobales: descuentosGlobales as BoletaDscRcgGlobal[],
+      }),
+      Error,
+      mensaje,
+    );
+  }
+});
+
+Deno.test("DscRcgGlobal: boleta 41 exige indicador y conserva exento/no facturable", () => {
+  const input = caso1Input();
+  input.tipoDte = 41;
+  input.cafXml = genCafXml(41);
+  input.items = [{ nombre: "Servicio exento", cantidad: 1, precio: 10000, exento: true }];
+  input.totals = { neto: 0, iva: 0, exento: 9000, total: 9000 };
+  input.descuentosGlobales = [{ tipo: "D", valorTipo: "$", valor: 1000 }];
+  assertThrows(() => buildBoletaDocumento(input), Error, "boleta 41 requiere exento=1");
+  for (const exento of [1, 2] as const) {
+    input.descuentosGlobales[0].exento = exento;
+    const { documento } = buildBoletaDocumento(input);
+    assertStringIncludes(documento, "<IndExeDR>" + exento + "</IndExeDR>");
+    assert(!documento.includes("<IVA>"));
+  }
+});
+
+Deno.test("DscRcgGlobal: firma cubre los movimientos y TED usa el total final en 39/41", () => {
+  const { pfxBytes, publicKey } = makeTestPfx();
+  for (const tipoDte of [39, 41] as const) {
+    const input = caso1Input();
+    input.tipoDte = tipoDte;
+    input.cafXml = genCafXml(tipoDte);
+    input.items = [{ nombre: "Servicio", cantidad: 1, precio: 11900, exento: tipoDte === 41 }];
+    input.descuentosGlobales = [
+      { tipo: "D", valorTipo: "%", valor: 10, exento: tipoDte === 41 ? 1 : undefined },
+      { tipo: "R", valorTipo: "$", valor: 500, exento: tipoDte === 41 ? 1 : undefined },
+    ];
+    input.totals = tipoDte === 39
+      ? { neto: 9420, iva: 1790, exento: 0, total: 11210 }
+      : { neto: 0, iva: 0, exento: 11210, total: 11210 };
+    const dte = buildSignedBoletaDte(input, pfxBytes, "pass");
+    const documento = dte.match(/<Documento\b[\s\S]*?<\/Documento>/)?.[0];
+    assert(documento);
+    assertStringIncludes(documento, "<MntTotal>11210</MntTotal>");
+    assertStringIncludes(documento, "<MNT>11210</MNT>");
+    assertStringIncludes(documento, "<MontoItem>11900</MontoItem>");
+    assertEquals((documento.match(/<DscRcgGlobal>/g) ?? []).length, 2);
+    const digest = dte.match(/<DigestValue>([^<]+)<\/DigestValue>/)?.[1];
+    const canonicalDocumento = documento.replace(/\r\n/g, "\n");
+    assertEquals(digest, sha1Base64(canonicalDocumento));
+    assert(verifyForgeSignature(dte, publicKey), "firma válida para boleta " + tipoDte);
+    // Cambiar sólo ValorDR debe invalidar el digest del Documento firmado.
+    const alterado = canonicalDocumento.replace("<ValorDR>500</ValorDR>", "<ValorDR>501</ValorDR>");
+    assert(alterado !== canonicalDocumento);
+    assert(digest !== sha1Base64(alterado), "los movimientos deben quedar cubiertos por el digest");
+  }
 });

@@ -1,0 +1,1095 @@
+openapi: 3.0.1
+info:
+  title: API SII - V1
+  description: Documento de definición de API SII en estandar OpenApi3
+  termsOfService: http://www.sii.cl/
+  contact:
+    name: Soporte Api
+  version: 1.0.5
+servers:
+- url: https://apicert.sii.cl/recursos/v1
+  description: Servidor de certificación 
+- url: https://pangal.sii.cl/recursos/v1
+  description: Servidor de certificación (Temporal) exclusivo envio ( POST /boleta.electronica.envio)
+- url: https://api.sii.cl/recursos/v1
+  description: Servidor de producción 
+- url: https://rahue.sii.cl/recursos/v1
+  description: Servidor de producción  (Temporal) exclusivo envio ( POST /boleta.electronica.envio)
+tags:
+- name: recursos
+  description: recursos de API del SII
+#  externalDocs:
+#    description: 
+#    url: http://www.sii.cl/
+- name: globales
+  description: Definiciones globales del API SII
+#  externalDocs:
+#    description: 
+#    url:
+paths:
+  /boleta.electronica.semilla:
+    get:
+      tags:
+      - recursos
+      summary: Obtención de la semilla
+      description: |
+         Este recurso se utiliza para el proceso de autenticación actual (`en el futuro va a cambiar`).
+         * Corresponde al primer paso que se debe realizar para obtener un TOKEN, con  lo cual va a poder
+           utilizar los recursos que requieran autorización (marcados con un candado).
+         * El valor obtenido tiene un tiempo de duración de 2 minutos
+      operationId: getSemilla
+      responses:
+        "200":
+          description: OK
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/RESPUESTA'
+        default:
+          description: Error inesperado
+          content: {}
+  /boleta.electronica.token:
+    post:
+      tags:
+      - recursos
+      summary: Obtener un token.
+      description: "Obtener un token de at autenticación para el envío y consultas automatizadas de boletas electrónicas\n
+               (`en el futuro va cambiar esta forma de autenticación`).\n
+          ## Paso 1:Generar un documento XML, con la siguientes dos líneas:\n
+              * Utilizar el valor del campo SEMILLA obtenido en la respuesta del recurso **/boleta.electronica.semilla**\n
+              * Se recomienda usar estas dos líneas ya que es mas fácil incrustar el elemento **Signature**, y que la firma no falle.\n
+              * Notese que el archivo tiene 2 líneas, no tres, ya que si hay tres indica que existe un salto de línea al final.\n
+                  > | línea | xml                 |\n
+                  > | ----- |  ------------------ |\n
+                  > | 1 |  `<?xml version=\"1.0\" encoding=\"UTF-8\"?>`|\n
+                  > | 2 |  `<getToken><item><Semilla>030530912644</Semilla></item></getToken>`|\n
+          ## Paso 2: Firmar Digitalmente el documento anterior\n
+              * Esto significa que debe usar su certificado digital, y generar un documento como el  que aparece en el ejemplo.\n
+              * Mas antecedentes en  [https://www.w3.org/TR/xmldsig-core](https://www.w3.org/TR/xmldsig-core)\n
+              * Los Algoritmos o valores que `se deben` usar son:\n
+                    > | Tag                     | Algorithm o Valor                                     |\n
+                    > | ----------------------- | ----------------------------------------------------- |\n
+                    > | CanonicalizationMethod  | http://www.w3.org/TR/2001/REC-xml-c14n-20010315       |\n
+                    > | SignatureMethod         | http://www.w3.org/2000/09/xmldsig#rsa-sha1            |\n
+                    > | Transform               | http://www.w3.org/2000/09/xmldsig#enveloped-signature |\n
+                    > | `Reference`             | `URI=\"\"` (en el ejemplo aparece con un blanco, pero es sin nada)                                             |\n
+                    > | DigestMethod            | http://www.w3.org/2000/09/xmldsig#sha1                |\n
+                    > | KeyValue                | RSAKeyValue                                           |\n
+                    > | DigestValue             | Debe estar codificado en **Base64**                   |\n
+          ## Paso 3: Verificación de la firma\n
+              * En la etapa de desarrollo es conveniente asegurar que durante el proceso de firma no haber alterado\n
+                el documento original. Esto sucede porque al generar el documento se hace un formateo del XML (**pretty printing**).\n
+              * Se supone que si se elimina el elemento **Signature** el documento debe quedar tal como estaba antes de firmar,\n
+                incluyendo espacios, saltos de linea, y eso se logra mas facilmente si usted lo hace con las dos líneas,\n
+                tal como se explicó en el paso anterior.\n
+              * Un software que ayuda a realizar esta tarea es `https://tools.chilkat.io/hashText.cshtml` (en linea), el cual\n
+                permite hacer el calculo de SHA1, codificandolo en formato **Base64**. \n
+                    > | Paso  | Línea                                      |\n
+                    > | ----- | ------------------------------------------ |\n
+                    > |Ingrese en [chilkat](https://tools.chilkat.io/hashText.cshtml) sólo **una** línea (con su semilla) en **Hash Text**|  ```<getToken><item><Semilla>030530912644</Semilla></item></getToken>```|\n
+                    > |verifique que la respuesta sea:|  `l2s9BqLppHaWo+w1Al1J5SsYScs=` |\n
+                    > |busque en documento firmado: | `<DigestValue>l2s9BqLppHaWo+w1Al1J5SsYScs=</DigestValue>`   |\n
+              * ## Verifique la firma en linea en [Chilkat Online Tools](https://tools.chilkat.io/xmlDsigVerify.cshtml)\n
+                    > Notese que si usted altera la semilla, el sitio arroja el siguiente error:\n
+                    > * Reference 1 digest is invalid because the computed digest differs from the digest in the XML.\n
+          ## Paso 4: Enviar el documento firmado al SII utilizando asignado ese valor al `BODY` de esta petición\n
+              * A continuación se muestra como debería ir el documento firmado:\n
+                    > | línea | xml                 | Observación |\n
+                    > | ----- |  ------------------ | ----------- |\n
+                    > | 1 | `<?xml version=\"1.0\" encoding=\"UTF-8\"?>` ||\n
+                    > | 2 | `<getToken><item><Semilla>030530912644</Semilla></item><Signature xmlns=\"http://www.w3.org/2000/09/xmldsig#\">`| **Signature** comienza inmediatamente despues de finalización de **item**`, en la misma línea|\n
+                    > | 3 .. | `...` ||\n
+                    > | ultima | `</Signature></getToken>` |**Signature** finaliza en la misma línea que **getToken**. Además no debería venir un salto de línea, si siguió las indicaciones dadas en el **paso 1**|\n
+          ## Paso 5: Utilizar Token recibido como respuesta a este recurso\n
+             * Utilizar el valor de este token en los recursos que requieran autorización ( aparecen marcados con un simbolo de Candado)
+               para lo cual lo deben agregar al Header llamado Cookie
+               con la el valor del TOKEN={token}, ejemplo: P7VQKYLDNHJGP\n
+                    > `Cookie:TOKEN=P7VQKYLDNHJGP` \n
+             * Actualmente el largo de este token es 13, pero `podría variar en el futuro`,
+               a un largo de `500`\n
+             * En el `futuro podría cambiar` el header y que no fuese `Cookie`
+                    "
+      operationId: token
+      requestBody:
+        description: Obtener Token
+        content:
+          application/xml:
+            schema: 
+             $ref: '#/components/schemas/getToken'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/RESPUESTATOKEN'
+        default:
+          description: Error inesperado
+          content: {}
+  /boleta.electronica.envio:
+    post:
+      servers:
+        - url: https://pangal.sii.cl/recursos/v1
+          description: Servidor de certificación (Temporal) exclusivo envio ( POST /boleta.electronica.envio)
+        - url: https://rahue.sii.cl/recursos/v1
+          description: Servidor de producción  (Temporal) exclusivo envio ( POST /boleta.electronica.envio)
+      tags:
+      - recursos
+      summary: Almacenamiento de un conjunto de boletas en el SII
+      description: |
+        **Sugerencias para realizar el envío de Boletas Electrónicas a SII**
+          (Fecha Actualización: 05 de mayo de 2021)
+
+          Para realizar el envío de boletas electrónicas y permitir aprovechar de manera eficiente la infraestructura disponible para todos los contribuyentes, se entregan las siguientes sugerencias o recomendaciones.
+          * Uso eficiente del token. Se sugiere obtener el token para que sea utilizado para todos los envíos que sean necesarios y evitar solicitar token por cada envío. El tiempo de actividad para que el token sea considerado como válido es de 1 hora, tiempo que se renueva automáticamente cada vez que se usa.
+          * Envío agrupado de Boletas. La sugerencia va por aprovechar el formato del esquema que permite agrupar más de una boleta por envío según la documentación vigente. Para efectos de envíos masivos de alto volúmenes es lo más recomendable. El número recomendado es de 50 boletas por envío
+          * Consulta de Envíos y Boletas. Una vez realizado el envío es recomendado considerar un tiempo de 10 minutos de espera para realizar consulta de las boletas o envíos.
+          * Formato de Request. Conformar de manera correcta la estructura según lo que se indica en la documentación de la API. No considerar espacios o caracteres especiales en la URL.
+          * Considerar el uso de un pool de direcciones IP para realizar envíos de información al SII, de manera de no sobrepasar los límites que impliquen activar protocolos de seguridad propios de la plataforma de SII con respecto la cantidad de envíos por IP y unidad de tiempo.
+          * Revisar en detalle la documentación para realizar los envíos de BE. Los sitios rahue.sii.cl y api.sii.cl, son plataformas dedicadas a la recepción de Boleta Electrónica en Producción. El sitio de palena.sii.cl es la plataforma dedicada para la recepción de DTE y RVD en Producción.
+
+        ## Paso 1: Generar el conjunto de boletas y firmarlas.
+        Ver la siguiente documentación, para poder generar las boletas en formato XML, las cuales deben estar firmadas digitalmente:
+          * <a href="http://www.sii.cl/factura_electronica/factura_mercado/schema_envio_bol_720.zip">Schema XML de la Boleta</a> 
+          * <a href="http://www.sii.cl/factura_electronica/factura_mercado/diag_boleta_720.zip">Diagrama de Schema XML de la Boleta</a>
+          * <a href="http://www.sii.cl/factura_electronica/factura_mercado/boletas_elec_020.pdf">Descripción del formato de la Boleta (PDF)</a>
+          * <a href="https://tools.chilkat.io/xmlDsigVerify.cshtml">Para librerias de XML</a>
+        ## Paso 2: Ingresar los parametros que exige este recurso
+          * Vea mas abajo, y aparecen los parametros
+        ## Paso 3: Enviarlas por este recurso, utilizando el BODY
+          * Como este recurso requiere autorización se debe ontener un TOKEN y agregar al Header llamado Cookie
+            con la el valor del TOKEN={token}, ejemplo: P7VQKYLDNHJGP\n
+                    > `Cookie:TOKEN=P7VQKYLDNHJGP` \n
+        ## Paso 4: De acuerdo al codigo de respuesta programar sus acciones
+           * Las respuestas HTTP posibles son:
+              * 200 - El Cual Indica exito
+              * 400 - Indica que tiene un error en los datos enviados. Vea el texto del error
+              * 401 - Tiene error en la auterización, es muy posible que le haya faltado el valor del TOKEN en la Cookie
+      operationId: boleta.electronica.grabacion
+      parameters:
+      - name: User-Agent
+        in: header
+        required: true
+        style: simple
+        explode: false
+        schema:
+          type: string
+          example: Mozilla/4.0 ( compatible; PROG 1.0; Windows NT)
+      requestBody:
+        description: Información del contenido del Body.
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/EnvioPost'
+        required: true
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Location:
+              schema:
+                $ref: '#/components/headers/X-Location'
+            X-Retry-After:
+              schema:
+                $ref: '#/components/headers/X-Retry-After'
+            X-RateLimit-Limit:
+              schema:
+                $ref: '#/components/headers/X-RateLimit-Limit'
+            X-RateLimit-Remaining:
+              schema:
+                $ref: '#/components/headers/X-RateLimit-Remaining'
+            X-RateLimit-Reset:
+              schema:
+                $ref: '#/components/headers/X-RateLimit-Reset'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultadoEnvioPost'
+        "400":
+            $ref: '#/components/responses/PeticionConError'
+        "401":
+            $ref: '#/components/responses/NoAutorizado'
+        "405":
+            $ref: '#/components/responses/LimiteExcedido'  
+        "500":
+            $ref: '#/components/responses/ErrorInterno'
+        default:
+          description: Error inesperado
+          content: {}
+      security:
+      - TOKEN: []
+      x-codegen-request-body-name: body
+  /boleta.electronica.envio/{rut}-{dv}-{trackid}:
+    get:
+      tags:
+      - recursos
+      summary: Obtención del estado del envío
+      description: Obtención del estado del envío de boletas y de los documentos que incluye.
+      operationId: boleta.electronica.envio
+      parameters:
+      - name: rut
+        in: path
+        description: rut de la empresa emisora de la boleta
+        required: true
+        style: simple
+        explode: false
+        schema:
+          type: integer
+      - name: dv
+        in: path
+        description: dv de la empresa emisora de la boleta
+        required: true
+        style: simple
+        explode: false
+        schema:
+          type: string
+      - name: trackid
+        in: path
+        description: identificación del envio
+        required: true
+        style: simple
+        explode: false
+        schema:
+          type: integer
+          format: int64
+          maximum: 999999999999999
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Location:
+              schema:
+                $ref: '#/components/headers/X-Location'
+            X-Retry-After:
+              schema:
+                $ref: '#/components/headers/X-Retry-After'
+            X-RateLimit-Limit:
+              schema:
+                $ref: '#/components/headers/X-RateLimit-Limit'
+            X-RateLimit-Remaining:
+              schema:
+                $ref: '#/components/headers/X-RateLimit-Remaining'
+            X-RateLimit-Reset:
+              schema:
+                $ref: '#/components/headers/X-RateLimit-Reset'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultadoEnvioDataRespuesta'
+              example:
+                rut_emisor: 45000054-K
+                rut_envia: 8315495-0
+                trackid: 1014
+                fecha_recepcion: 30/07/2020 07:57:42
+                estado: EPR
+                estadistica:
+                - tipo: 39
+                  informados: 3
+                  aceptados: 2
+                  rechazados: 1
+                  reparos: 0
+                - tipo: 41
+                  informados: 1
+                  aceptados: 0
+                  rechazados: 0
+                  reparos: 1
+                detalle_rep_rech:
+                - tipo: 39
+                  folio: 1202
+                  estado: RCH
+                  descripcion: Dte Rechazado
+                  error:
+                  - seccion: CRT
+                    linea: 155
+                    nivel: 3
+                    codigo: 11
+                    descripcion: RUT envia diferente al Upload
+                    detalle: '[155]LSX-00291 value 0.52 is not declared'
+                  - seccion: HED
+                    linea: 222
+                    nivel: 3
+                    codigo: 100
+                    descripcion: Valor Detalle Distinto a Precio * Cantidad
+                    detalle: '[83154495-0] <> [9145888-K]'
+                - folio: 3500
+                  estado: RPR
+                  descripcion: Dte Aceptado con reparos
+                  error:
+                  - seccion: DET
+                    linea: 2
+                    nivel: 1
+                    codigo: 200
+                    descripcion: Valor Detalle Distinto a Precio * Cantidad
+                    detalle: '[2500 <> 3500]'
+        "400":
+            $ref: '#/components/responses/PeticionConError'
+        "401":
+            $ref: '#/components/responses/NoAutorizado'
+        "404":
+            $ref: '#/components/responses/RecursoNoEncontrado'
+        "405":
+            $ref: '#/components/responses/LimiteExcedido'  
+        "500":
+            $ref: '#/components/responses/ErrorInterno'
+        default:
+          description: Error inesperado
+          content: {}
+      security:
+      - TOKEN: []
+      x-codegen-request-body-name: body
+  /boleta.electronica/{rut}-{dv}-{tipo}-{folio}/estado:
+    get:
+      tags:
+      - recursos
+      summary: Estado de un documento boleta de acuerdo a información entregada (rut_receptor, dv_receptor, monto, fecha )
+      description: Estado de un documento boleta de acuerdo a información entregada (rut_receptor, dv_receptor, monto, fecha )
+      operationId: get.estado
+      parameters:
+      - name: rut
+        in: path
+        description: rut de la empresa emisora de la boleta
+        required: true
+        style: simple
+        explode: false
+        schema:
+          type: integer
+      - name: dv
+        in: path
+        description: dv de la empresa emisora de la boleta
+        required: true
+        style: simple
+        explode: false
+        schema:
+          type: string
+      - name: tipo
+        in: path
+        description: tipo del documento
+        required: true
+        style: simple
+        explode: false
+        schema:
+          type: integer
+      - name: folio
+        in: path
+        description: folio emitido por la empresa
+        required: true
+        style: simple
+        explode: false
+        schema:
+          type: integer
+      - name: rut_receptor
+        in: query
+        description: Rut Receptor de la boleta electronica
+        required: false
+        style: form
+        explode: true
+        schema:
+          type: number
+      - name: dv_receptor
+        in: query
+        description: Dv Receptor de la boleta electronica
+        required: false
+        style: form
+        explode: true
+        schema:
+          type: number
+      - name: monto
+        in: query
+        description: monto de la boleta electronica
+        required: false
+        style: form
+        explode: true
+        schema:
+          type: number
+      - name: fechaEmision
+        in: query
+        description: fecha de emisión de la boleta electrónica (formato DD-MM-YYYY)
+        required: false
+        style: form
+        explode: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-RateLimit-Limit:
+              schema:
+                $ref: '#/components/headers/X-RateLimit-Limit'
+            X-RateLimit-Remaining:
+              schema:
+                $ref: '#/components/headers/X-RateLimit-Remaining'
+            X-RateLimit-Reset:
+              schema:
+                $ref: '#/components/headers/X-RateLimit-Reset'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EstadoBoletaRespuesta'
+        "400":
+            $ref: '#/components/responses/PeticionConError'
+        "401":
+            $ref: '#/components/responses/NoAutorizado'
+        "404":
+            $ref: '#/components/responses/RecursoNoEncontrado'
+        "405":
+            $ref: '#/components/responses/LimiteExcedido'  
+        "500":
+            $ref: '#/components/responses/ErrorInterno'
+        default:
+          description: Error inesperado
+          content: {}
+      security:
+      - TOKEN: []
+      x-codegen-request-body-name: body
+  /globales/boleta.electronica.envio.estado:
+    get:
+      tags:
+      - globales
+      summary: Información de los estados del envío de las boletas electrónicas
+      description: Información de los estados del envío de las boletas electrónicas
+      operationId: globales.boleta.electronica.envio.estado
+      responses:
+        "200":
+          description: 
+              OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CodigoDescripcionStr'
+              example:
+                - codigo: "EPR"
+                  descripcion: "Envio Procesado"
+                - codigo: "RCO"
+                  descripcion: "Rechazado por consistencia"
+        "405":
+            $ref: '#/components/responses/LimiteExcedido'
+  /globales/boleta.electronica.estado:
+    get:
+      tags:
+      - globales
+      summary: Información de los estados de la boleta electrónica de acuerdo a información entregada ( rut_receptor, dv_receptor, monto, fecha ).
+      description: Información de los estados de la boleta electrónica de acuerdo a información entregada ( rut_receptor, dv_receptor, monto, fecha ).
+      operationId: globales.boleta.electronica.estado
+      responses:
+        "200":
+          description: 
+              OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CodigoDescripcionStr'
+              example:
+                - codigo: "DOK"
+                  descripcion: "Documento Recibido por el SII. Datos Coinciden con los Registrados"
+        "405":
+            $ref: '#/components/responses/LimiteExcedido'
+        
+  /globales/boleta.electronica.tipo:
+    get:
+      tags:
+      - globales
+      summary: Tipos de Boleta Electrónica
+      description: Tipos de Boleta Electrónica
+      operationId: globales.boleta.electronica.tipo
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CodigoDescripcion'
+              example:
+              - codigo: 39
+                descripcion: Boleta Electrónica
+              - codigo: 41
+                descripcion: Boleta Exenta Electrónica
+        "405":
+            $ref: '#/components/responses/LimiteExcedido'
+  /globales/boleta.electronica.nivel:
+    get:
+      tags:
+      - globales
+      summary: Nivel de Error en documento Boleta Electrónica.
+      description: Nivel de Error en documento Boleta Electrónica.
+      operationId: globales.boleta.electronica.nivel
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CodigoDescripcion'
+              example:
+              - codigo: 1
+                descripcion: Reparo leve
+              - codigo: 2
+                descripcion: Reparo
+              - codigo: 3
+                descripcion: Rechazo
+        "405":
+            $ref: '#/components/responses/LimiteExcedido'  
+  /globales/boleta.electronica.seccion:
+    get:
+      tags:
+      - globales
+      summary: Secciones de un documento boleta que pueden contener errores
+      description: Secciones de un documento boleta que pueden contener errores
+      operationId: globales.boleta.electronica.seccion
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CodigoDescripcionStr'
+              example:
+              - codigo: ENV
+                descripcion: Envio
+              - codigo: CRT
+                descripcion: Caratula
+        "405":
+            $ref: '#/components/responses/LimiteExcedido'  
+components:
+  headers:
+    X-Location:
+      description:  
+           URL para consultar el resultado. Debe esperar la cantidad de segundos
+           que viene descrita en Rety-After, antes de utilizarla.
+           Aqui se consultara el envio realizado por la empresa 45000054-K con trackid 1014
+      style: simple
+      explode: false
+      schema:
+        type: string
+      example: /boleta.electronica.envio/45000054-K-1014
+    X-Retry-After:
+      description: 
+          Cantidad de segundos que debe esperar para utilizar url que viene en Location.
+          Es "muy importante" respetar estos segundos, ya que con eso ayuda al resto de la
+          comunidad. 
+      style: simple
+      explode: false
+      schema:
+        type: integer
+      example: 10
+    X-RateLimit-Limit:
+      description: 
+         Cantidad de Requerimientos por hora.
+      schema:
+        type: integer
+      example: 600
+    X-RateLimit-Remaining:
+      description: 
+         Numero de Requerimientos que quedan en la ventana de tiempo.
+      schema:
+        type: integer
+      example: 580
+    X-RateLimit-Reset:
+      description: 
+         Segundos en el cual contador de requerimientos se reinicia
+      schema:
+        type: integer
+      example: 10
+  responses:
+    NoAutorizado:
+      description: (HTTP 401) No autorizado para acceder a este recurso
+      content:
+         text/plain:
+            schema:
+              $ref: '#/components/schemas/Error'
+    LimiteExcedido:
+      description: (HTTP 405) Limite Excedido 
+      content:
+         text/plain:
+            schema:
+              $ref: '#/components/schemas/Error'
+    PeticionConError:
+      description: (HTTP 400) Peticion con error
+      content:
+         text/plain:
+            schema:
+              $ref: '#/components/schemas/Error'
+    ErrorInterno:
+      description: (HTTP 500) Error interno
+      content:
+         text/plain:
+            schema:
+              $ref: '#/components/schemas/Error'
+    RecursoNoEncontrado:
+      description: (HTTP 404) Recurso No Encontrado
+      content:
+         text/plain:
+            schema:
+              $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: string
+    EstadoBoletaRespuesta:
+      type: object
+      properties:
+        codigo:
+          type: string
+          description: |
+            * DOK - Documento Recibido por el SII. Datos Coinciden con los Registrados
+            * DNK - Documento Recibido por el SII pero Datos NO Coinciden con los registrados
+            * FAU - Documento No Recibido por el SII
+            * FNA - Documento No Autorizado
+            * FAN - Documento Anulado.
+            * EMP - Empresa No Autorizada a Emitir Documentos Tributarios Electronicos
+            * TMD - Existe Nota de Debito que Modifica el Texto Documento
+            * TMC - Existe Nota de Crédito que Modifica el Texto
+            * MMD - Existe Nota de Debito que Modifica Montos Documento
+            * MMC - Existe Nota de Crédito que Modifica Montos Documento
+            * AND - Existe Nota de Debito que anula Documento
+            * ANC - Existe Nota de Crédito que anula Documento
+          enum:
+          - DOK
+          - DNK
+          - FAU
+          - FNA
+          - FAN
+          - EMP
+          - TMD
+          - TMC
+          - MMD
+          - MMC
+          - AND
+          - ANC
+        descripcion:
+          maxLength: 80
+          type: string
+          description: Descripción del estado de la Boleta
+      example:
+        codigo: DNK
+        descripcion: Documento Recibido por el SII pero Datos NO Coinciden con los
+          registrados
+    ResultadoEnvioPost:
+      type: object
+      properties:
+        rut_emisor:
+          type: string
+          description: Rut de la Empresa emisora. Formato RUT-DV, ejemplo 45000054-K
+        rut_envia:
+          type: string
+          description: Rut de la persona que envia. Formato RUT-DV, ejemplo 8315495-0
+        trackid:
+          type: integer
+          format: int64
+          maximum: 999999999999999
+          description: Identificador proporcionado por el SII para identificar este envío. Ejemplo 1014
+        fecha_recepcion:
+          type: string
+          description: Fecha de recepción en el SII. Formato YYYY-MM-DD HH:MM:SS
+        estado:
+          type: string
+          description: REC - Indica que esta Recibido
+        file:
+          type: string
+          description: Nombre del archivo con el que se hizo el envío
+      example:
+        rut_emisor: "45000054-K"
+        rut_envia: "83154595-0"
+        trackid: 1014
+        fecha_recepcion: "2020-09-01 20:30:10"
+        estado: "REC"
+        file: "boleta-2020-09-01-001.xml"
+    ResultadoEnvioDataRespuesta:
+      type: object
+      properties:
+        rut_emisor:
+          type: string
+          description: Formato RUT-DV, ejemplo 45000054-K
+        rut_envia:
+          type: string
+          description: Formato RUT-DV, ejemplo 8315495-0
+        trackid:
+          type: integer
+          format: int64
+          description: Identificador (max 15) proporcionado por el SII para identificar este envio. Ejemplo 1014
+          maximum: 999999999999999
+        fecha_recepcion:
+          type: string
+          description: Formato DD/MM/YYYY HH:MM:SS
+        estado:
+          type: string
+          description: "* REC\t- Envio recibido\n* EPR\t- ENVIO PROCESADO\n* CRT\t\
+            - Caratula OK\n* FOK\t- Firma de Envio Validada\n* PRD\t- Envio en Proceso\n\
+            * RCH\t- Rechazado por errores en informacion\n* RCO\t- Rechazado por\
+            \ consistencia\n* VOF\t- No se encontro el archivo .xml \n* RFR\t- Rechazado\
+            \ por error en firma\n* RPR\t- Aceptado con Reparos\n* RPT\t- Envio Repetido\
+            \ Rechazado\n* RSC\t- Rechazado por Schema\n* SOK\t- Schema Validado\n\
+            * RCT- \tRechazado por Error en Caratula\n"
+          enum:
+          - CRT
+          - EPR
+          - FOK
+          - PRD
+          - RCH
+          - RCO
+          - VOF
+          - REC
+          - RFR
+          - RPR
+          - RPT
+          - RSC
+          - SOK
+          - RCT
+        estadistica:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResultadoEnvioDataRespuesta_estadistica'
+        detalle_rep_rech:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResultadoEnvioDataRespuesta_detalle_rep_rech'
+    CodigoDescripcion:
+      type: object
+      properties:
+        codigo:
+          type: integer
+        descripcion:
+          maxLength: 50
+          type: string
+    CodigoDescripcionStr:
+      type: object
+      properties:
+        codigo:
+          maxLength: 3
+          type: string
+        descripcion:
+          maxLength: 50
+          type: string
+    EnvioPost:
+      type: object
+      properties:
+        rutSender:
+          type: integer
+        dvSender:
+          type: string
+        rutCompany:
+          type: integer
+        dvCompany:
+          type: string
+        archivo:
+          type: string
+          format: binary
+      example:
+        rutSender: 8315495
+        dvSender: "0"
+        rutCompany: 45000054
+        dvCompany: K
+    ResultadoEnvioDataRespuesta_estadistica:
+      type: object
+      properties:
+        tipo:
+          type: integer
+          description: "* 39\t- Boleta Electronica\n* 41\t- Boleta Exenta Electronica\n"
+          enum:
+          - 39
+          - 41
+        informados:
+          type: integer
+        aceptados:
+          type: integer
+        rechazados:
+          type: integer
+        reparos:
+          type: integer
+    ResultadoEnvioDataRespuesta_error:
+      type: object
+      properties:
+        seccion:
+          type: string
+          description: "* ENV - Envio\n* CRT - Caratula\n* TED - Timbre Electronico\
+            \ del Documento\n* CAF - Codigo de Autorizacion de Folios \n* DTE - Documento\
+            \ Tributario Electrónico\n* HED - Header (cabecera del documento)\n* DET\
+            \ - Detalle del documento\n* REF - Referencias\n* DRG - Descuento y Recargos\
+            \ Globales\n"
+          enum:
+          - ENV
+          - CRT
+          - TED
+          - CAF
+          - DTE
+          - HED
+          - DET
+          - REF
+          - DRG
+        linea:
+          type: integer
+        nivel:
+          type: integer
+          description: |
+            * 1 - Reparo leve
+            * 2 - Reparo
+            * 3 - Rechazo
+        codigo:
+          type: integer
+        descripcion:
+          type: string
+        detalle:
+          type: string
+    ResultadoEnvioDataRespuesta_detalle_rep_rech:
+      type: object
+      properties:
+        folio:
+          type: integer
+          nullable: true
+          description: "Es el folio dado por el emisor. Puede tener valor null, cuando existen errores a nivel, de esquema, o de firma, etc"
+        tipo:
+          type: integer
+          nullable: true
+          description: "* 39\t- Boleta Electronica\n* 41\t- Boleta Exenta Electronica\n* null\t- Cuando hay un error a nivel de esquema o de Firma"
+        estado:
+          type: string
+          description: |
+            * DOK - Dte Aceptado
+            * RPR - Dte Aceptado con reparos
+            * RCH - DTE Rechazado
+            * RLV - Dte Aceptado con reparos leves
+          enum:
+          - DOK
+          - RPR
+          - RCH
+          - RLV
+        descripcion:
+          type: string
+        error:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResultadoEnvioDataRespuesta_error'
+    RESPUESTA:
+      type: object
+      properties:
+         RESP_BODY: 
+           type: object
+           properties:
+             SEMILLA:
+               type: string
+           example:
+             SEMILLA: "030530912644"
+           xml:
+             prefix: 'SII'
+         RESP_HDR:
+           type: object
+           properties:
+             ESTADO:
+               type: integer
+               enum: [0,-1,-2]
+               description: |
+                 * 00 OK Genera Semilla
+                 * -1 Error Interno. Configuracion
+                 * -2 Error Interno. Base de Datos
+           example:
+             ESTADO: 0
+           xml:
+             prefix: 'SII'
+      xml:
+        prefix: 'SII'
+        namespace: 'http://www.sii.cl/XMLSchema'
+    RESPUESTATOKEN:
+      type: object
+      properties:
+         RESP_HDR:
+           type: object
+           properties:
+             ESTADO:
+               type: integer
+               enum: [0,1,2,3,4,5,6,7,8,9,10,11,12,21,-3,-07]
+             GLOSA:
+               type: string
+               maxLength: 500
+               description: |
+                  * 00 Token Creado 
+                  * 01 XML Inválido (IOException), función valSignedXml 
+                  * 02 XML Inválido (SAXException), función valSignedXml
+                  * 03 XML Inválido (ParserConfigurationException), función valSignedXml 
+                  * 04 XML Inválido, elemento “Signature” no existe, función valSignedXml
+                  * 05 XML Inválido, firma invalida, función valSignedXml 
+                  * 06 XML Inválido, elemento “Semilla” no existe, función getSeed
+                  * 07 ERROR (MessageException).
+                  * 08 ERROR RETORNO :
+                      * "PARAMETROS INCORRECTOS"
+                      * "TIME-OUT DEL SEED"
+                      * "NO GENERA TOKEN func:CreaToken"
+                      * "NO PUEDO ACT. SEED CON TOKEN"
+                      * "TIME-OUT del SEED"
+                      * "NO Existe SEED"
+                  * 09  ERROR (MessageException)
+                  * 10  ERROR RETORNO
+                      * "ERROR RETORNO DATOS"
+                      * "NO PUEDO CREAR O ACT. TOKEN"
+                  * 11  XML Inválido, elemento “Certificate” no existe, función getCertificado
+                  * 12  ERROR (12) (MessageException)
+                  * 21  Firma invalida( La llave pública no coincide con la del certificado).
+                  * -3  Error en Autenticación
+                  * -07 Error (12) parse ERROR en Validación del RUT (verificar que el usuario se
+                        encuentre registrado en el SII con la opción de autenticación mediante
+                        “ Certificado Digital”'
+           example:
+             ESTADO: "00"
+             GLOSA: "Token Creado"
+           xml:
+             prefix: 'SII'
+         RESP_BODY: 
+           type: object
+           properties:
+             TOKEN:
+               type: string
+           example:
+             TOKEN: "XAuSbYXiNh9Ik"
+           xml:
+             prefix: 'SII'
+      xml:
+        name: "RESPUESTA"
+        prefix: 'SII'
+        namespace: 'http://www.sii.cl/XMLSchema'
+    getToken:
+      type: object
+      properties:
+        item:
+          type: object
+          properties:
+             Semilla:
+              type: string
+          example:
+             Semilla: "030530912644"
+        Signature:
+                type: object
+                properties:
+                  xmlns:
+                    type: string
+                    xml:
+                      attribute: true
+                  SignedInfo:
+                    type: object
+                    properties:
+                       CanonicalizationMethod:
+                          type: object
+                          properties:
+                            Algorithm:
+                              type: string
+                              xml:
+                                attribute: true
+                          example:
+                            Algorithm: "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"
+                       SignatureMethod:
+                          type: object
+                          properties:
+                            Algorithm:
+                              type: string
+                              xml:
+                                attribute: true
+                          example:
+                            Algorithm: "http://www.w3.org/2000/09/xmldsig#rsa-sha1"
+                       Reference:
+                          type: object
+                          properties:
+                            URI:
+                              type: string
+                              nullable: true
+                              xml:
+                                attribute: true
+                            Transforms:
+                              type: object
+                              properties:
+                                Transform:
+                                  type: object
+                                  properties:
+                                    Algorithm:
+                                      type: string
+                                      xml:
+                                        attribute: true
+                                  example:
+                                    Algorithm: "http://www.w3.org/2000/09/xmldsig#enveloped-signature"
+                            DigestMethod:
+                               type: object
+                               properties:
+                                 Algorithm:
+                                   type: string
+                                   xml:
+                                     attribute: true
+                               example:
+                                  Algorithm: "http://www.w3.org/2000/09/xmldsig#sha1"
+                            DigestValue:
+                               type: string
+                               format: base64
+                          example:
+                            URI: " "
+                            DigestValue: "l2s9BqLppHaWo+w1Al1J5SsYScs="
+                  SignatureValue:
+                    type: string
+                  KeyInfo:
+                    type: object
+                    properties:
+                      KeyValue:
+                        type: object
+                        properties:
+                          RSAKeyValue:
+                            type: object
+                            properties:
+                              Modulus:
+                                type: string
+                              Exponent:
+                                type: string
+                            example:
+                              Modulus: "2Pb4kEB19m7NmOUYew9f36325yrTLTPMU7qzYG2A0/BsubxDdgQw2Op0x6zXvOVX
+sYI9KkPXtD5orKJMjwxYRv9wUWdyiE776Rv4ljfJO7EQhIK1fDQDnPt0HefBS06Xzg2QLBvLR+pe1vc6C02Dr99v+lnLA8
+mnZiJlRHndhNU="
+                              Exponent: "AQAB"
+
+                      X509Data:
+                        type: object
+                        properties:
+                           X509Certificate:
+                             type: string
+                        example:
+                           X509Certificate: |
+                                MIIF1DCCBLygAwIBAgIDAQNtMA0GCSqGSIb3DQEBBQUAMIHGMQswCQYDVQQG
+                                EwJDTDEYMBYGA1UEChMPQWNlcHRhLmNvbSBTLkEuMTgwNgYDVQQLEy9BdXRv
+                                cmlkYWQgY2VydGlmaWNhZG9yYSBDbGFzZSAzIHBlcnNvbmEgbmF0dXJhbDFD
+                                MEEGA1UEAxM6QWNlcHRhLmNvbSBBdXRvcmlkYWQgY2VydGlmaWNhZG9yYSBD
+                                bGFzZSAzIHBlcnNvbmEgbmF0dXJhbDEeMBwGCSqGSIb3DQEJARYPaW5mb0Bh
+                                Y2VwdGEuY29tMB4XDTAxMDkyNTIxMDgxMloXDTAyMDkyNTIxMDgxMlowgZ8x
+                                CzAJBgNVBAYTAkNMMRgwFgYDVQQKEw9BY2VwdGEuY29tIFMuQS4xLDAqBgNV
+                                BAsTI0NlcnRpZmljYWRvIENsYXNlIDMgUGVyc29uYSBOYXR1cmFsMRwwGgYJ
+                                KoZIhvcNAQkBFg1uY2hlbGVAc2lpLmNsMSowKAYDVQQDEyFOSUNPTEFTIFpB
+                                UFJJQU4gQ0hFTEVCSUZTS0kgQkFFWkEwgZ8wDQYJKoZIhvcNAQEBBQADgY0A
+                                MIGJAoGBANj2+JBAdfZuzZjlGHsPX9+t9ucq0y0zzFO6s2BtgNPwbLm8Q3YE
+                                MNjqdMes17zlV7GCPSpD17Q+aKyiTI8MWEb/cFFncohO++kb+JY3yTuxEISC
+                                tXw0A5z7dB3nwUtOl84NkCwby0fqXtb3OgtNg6/fb/pZywPJp2YiZUR53YTV
+                                AgMBAAGjggJyMIICbjAdBggrBgEEAbVrDwQRFg9BY2VwdGEuY29tIFMuQS4w
+                                JQYDVR0RBB4wHKAaBggrBgEEAcEBAaAOFgwxMC40MTEuODcxLTIwDwYIKwYB
+                                Jh0z1DR3Pl3xOiaFIjSXsQO2PSzcA3wZXYF+KDrMul8e5lAF2NNiLmMVtXEx
+                                ZykMaTGGWS0ZETDhJmBwEZGpP4+lt/JhgwF1Sb6wdrXp7MFCJUc1Tj+/5JqH
+                                1kP0E63/hVElrcP0g8Zn8Z+vr/PMGW1kKgE0IyS4iJ8eIhNSK5phFyKJUn0l
+                                BmIZX7u89d5u7X8=
+                example:
+                  SignatureValue: "jlbzatIIBLW8AjH++5uVTTrGIMVwGButuoAR88y/hvSc1+6/eW1K864fK3cKi76oArqk7lAM4pP
+okoXme0JT/hRXXGo6ecuKzO18z2WfPWwgnN0f3ac03TDu7PwfqiDG9mhQpYfIkNp6GNJIiqlg9PG2w1fOJ1QoypsrQmKq6
+YU="
+                  xmlns: "http://www.w3.org/2000/09/xmldsig#"
+  securitySchemes:
+    TOKEN:
+      type: apiKey
+      description: "# Autenticación SII.\n
+          >  Este tipo de autenticación no permite realizar el `Try Out`, por lo que se `NO`puede ejecutar  el API desde la documentación.\n
+             Si genera las instrucciones adecuadas para el comando `curl`.\n
+             Además es conveniente agregarle al comando curl el parametro `-i`, el cual muestra las cabeceras de respuesta.\n
+             También el parametro `-k` por si no tiene registrado los certificados intermedios y de CA del api.sii.cl.\n
+
+
+          ###  Ejemplo: TOKEN=YZVQNQY4J5DT9\n"
+      name: Cookie
+      in: header

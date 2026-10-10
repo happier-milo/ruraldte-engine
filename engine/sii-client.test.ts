@@ -7,11 +7,15 @@
 // trackid, y las formas de request (URL, Cookie TOKEN, User-Agent, campos multipart).
 // ============================================================================
 
-import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "jsr:@std/assert@1";
 import forge from "npm:node-forge@1.3.1";
 import {
   buildSignedToken,
   type FetchFn,
+  getBoletaStatus,
+  getEnvioStatus,
+  parseBoletaStatus,
+  parseEnvioBoletaStatus,
   getSemilla,
   getToken,
   parseSemilla,
@@ -183,4 +187,88 @@ Deno.test("sendEnvio: multipart con los 5 campos + Cookie TOKEN + User-Agent", a
     `name="archivo"; filename="envio.xml"\r\nContent-Type: application/xml\r\n\r\n<EnvioBOLETA/>\r\n--${boundary}--\r\n`,
   );
   assert(text.endsWith(`--${boundary}--\r\n`), "el multipart debe cerrar con el boundary final");
+});
+
+Deno.test("consultas boleta/envío: preservan retorno y requests existentes ante errores HTTP", async () => {
+  for (const status of [200, 400, 401, 404, 405, 500]) {
+    const raw = "<html>Respuesta inesperada</html>";
+    const envio = mockFetch(raw, status);
+    const boleta = mockFetch(raw, status);
+    const input = { rutCompany: "45000054-K", token: "TKN", userAgent: "ua/1" };
+    assertEquals(
+      await getEnvioStatus("cert", {
+        ...input,
+        trackId: "1014",
+        fetchFn: envio.fn,
+      }),
+      { status, raw },
+    );
+    assertEquals(
+      await getBoletaStatus("prod", {
+        ...input,
+        tipo: 39,
+        folio: 1202,
+        query: { fechaEmision: "30-07-2020", monto: 1000 },
+        fetchFn: boleta.fn,
+      }),
+      { status, raw },
+    );
+    assertEquals(
+      envio.calls[0].url,
+      "https://apicert.sii.cl/recursos/v1/boleta.electronica.envio/45000054-K-1014",
+    );
+    assertEquals(
+      boleta.calls[0].url,
+      "https://api.sii.cl/recursos/v1/boleta.electronica/45000054-K-39-1202/estado?fechaEmision=30-07-2020&monto=1000",
+    );
+    for (const call of [envio.calls[0], boleta.calls[0]]) {
+      assertEquals(call.init.method, "GET");
+      assertEquals(call.init.headers, {
+        "User-Agent": "ua/1",
+        "Cookie": "TOKEN=TKN",
+        "Accept": "application/json",
+      });
+    }
+  }
+});
+
+Deno.test("consultas de estado: Content-Type optativo y parsers exportados", async () => {
+  const input = {
+    rutCompany: "45000054-K",
+    token: "TKN",
+    userAgent: "ua/1",
+    includeContentType: true,
+    fetchFn: (() =>
+      Promise.resolve(
+        new Response('{"codigo":"DOK","descripcion":"OK"}', {
+          headers: { "Content-Type": "application/json" },
+        }),
+      )) as FetchFn,
+  };
+  const boleta = await getBoletaStatus("cert", {
+    ...input,
+    tipo: 41,
+    folio: 1,
+  });
+  assertEquals(boleta.contentType, "application/json");
+  assertEquals(parseBoletaStatus(boleta).parsing, "complete");
+  const envio = await getEnvioStatus("prod", { ...input, trackId: "1014" });
+  assertEquals(envio.contentType, "application/json");
+  assertEquals(parseEnvioBoletaStatus(envio).parsing, "unrecognized");
+  const absent = await getEnvioStatus("cert", {
+    ...input,
+    trackId: "1014",
+    fetchFn: (() =>
+      Promise.resolve(new Response(new TextEncoder().encode("{}")))) as FetchFn,
+  });
+  assertEquals(absent.contentType, null);
+});
+
+Deno.test("consultas de estado: los errores de transporte siguen propagándose", async () => {
+  const input = {
+    rutCompany: "45000054-K", token: "TKN", userAgent: "ua/1",
+    fetchFn: (() => Promise.reject(new Error("Sin conexión"))) as FetchFn,
+  };
+  await assertRejects(() => getBoletaStatus("cert", { ...input, tipo: 39, folio: 1 }), Error, "Sin conexión");
+  await assertRejects(() => getEnvioStatus("cert", { ...input, trackId: "1014" }), Error, "Sin conexión");
 });

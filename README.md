@@ -143,6 +143,38 @@ que sus piezas son `buildSignedBoletaDte`, `buildEnvioBoleta` y el
 `authenticate` + `sendEnvio` de `engine/sii-client.ts`. Son dos protocolos
 distintos del SII, no una preferencia de esta librería.
 
+### Consultar estado de boletas
+
+Las consultas conservan el retorno original `{ status, raw }`. El parseo es
+optativo y no lanza por cambios en el cuerpo del SII:
+
+```ts
+import { getBoletaStatus, parseBoletaStatus, SII_USER_AGENT } from "@ruraldte/engine/sii-client";
+
+const respuesta = await getBoletaStatus("cert", {
+  rutCompany: "76543210-K", tipo: 39, folio: 1, token,
+  userAgent: SII_USER_AGENT,
+  includeContentType: true, // optativo; agrega contentType al retorno
+});
+const estado = parseBoletaStatus(respuesta);
+// estado.data.codigo / descripcion: campos reconocibles, ambos optativos
+// estado.parsing: "complete" | "partial" | "unrecognized"
+// estado.raw: texto original; estado.payload: JSON original si pudo decodificarse
+// estado.observations: campos ausentes, tipos inesperados o códigos desconocidos
+```
+
+Para un envío, usa `getEnvioStatus` y `parseEnvioBoletaStatus`: recupera
+estadísticas y detalle de reparos/rechazos. Los parsers conservan campos nuevos
+en `payload` y códigos nuevos literalmente; no convierten tipos ni buscan
+alias. En arreglos mixtos, `data` contiene los elementos reconocibles; las
+posiciones originales permanecen en `payload` y se indican en las observaciones.
+
+`complete` significa que están presentes los campos conocidos con tipos y códigos
+reconocidos, no que el SII aceptó la boleta. Campos ausentes o inválidos producen
+`partial`; sin campos reconocibles, `unrecognized`. HTTP y parsing son
+independientes: HTTP 200 no implica aceptación; los errores de transporte siguen
+propagándose. El OpenAPI orienta el parseo, sin imponer un esquema rígido.
+
 Las credenciales viajan **por request**. El motor no tiene estado, no guarda
 nada y no conoce ninguna base de datos: cómo custodias el `.pfx` es tu
 problema — y debería serlo.
