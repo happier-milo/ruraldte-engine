@@ -16,6 +16,7 @@ import {
   parseForm,
   parseSiiFolioErrorPage,
   plazoDelPaso,
+  RuralDteFolioError,
   SII_NO_AUTORIZA,
 } from "./sii-folios.ts";
 
@@ -310,6 +311,43 @@ Deno.test("cada paso contra el portal sale con plazo, y los que otorgan folios e
   } finally {
     AbortSignal.timeout = original;
   }
+});
+
+// ── El SII no contestó, o contestó y no abrió la sesión ─────────────────────────────
+
+Deno.test("si la conexión se corta en los tres intentos, el error dice que el SII no contestó", async () => {
+  // Lo que pasó el 10-oct-2026 con el portal de certificación: la red lanza, no hay
+  // respuesta que leer. No es el certificado, y se pasa solo.
+  const deno = (globalThis as unknown as { Deno: Record<string, unknown> }).Deno;
+  const fetchPrevio = globalThis.fetch;
+  const clientPrevio = deno.createHttpClient;
+  const set = (v: unknown) =>
+    Object.defineProperty(deno, "createHttpClient", { value: v, configurable: true, writable: true });
+  set(() => ({}));
+  let llamadas = 0;
+  globalThis.fetch = (() => {
+    llamadas++;
+    return Promise.reject(new TypeError("connection error: peer closed connection without sending TLS close_notify"));
+  }) as typeof fetch;
+  try {
+    const error = await openSiiSession({ pfxBase64: PFX, pfxPassword: "pass", ambiente: 0 }, "https://maullin.sii.cl/x")
+      .then(() => null, (e) => e as RuralDteFolioError);
+    assert(error instanceof RuralDteFolioError);
+    assertEquals([error.stage, error.reachedGrant, error.sinRespuesta], ["auth", false, true]);
+    assertEquals(llamadas, 3);
+  } finally {
+    globalThis.fetch = fetchPrevio;
+    set(clientPrevio);
+  }
+});
+
+Deno.test("si el SII contesta pero no abre la sesión, no se confunde con una caída: puede ser el certificado", async () => {
+  await conRedFalsa(() => new Response("<html>sin sesion</html>", { status: 200 }), async () => {
+    const error = await openSiiSession({ pfxBase64: PFX, pfxPassword: "pass", ambiente: 0 }, "https://maullin.sii.cl/x")
+      .then(() => null, (e) => e as RuralDteFolioError);
+    assert(error instanceof RuralDteFolioError);
+    assertEquals([error.stage, error.sinRespuesta], ["auth", false]);
+  });
 });
 
 Deno.test("todo paso que puede otorgar folios se llama post_confirm…: es por el nombre que espera más", () => {

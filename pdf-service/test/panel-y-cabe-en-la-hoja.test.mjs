@@ -15,7 +15,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PDFDocument } from "pdf-lib";
-import { generateBoletaElectronicaPdf } from "../src/lib/boleta-pdf.mjs";
+import { generateBoletaElectronicaPdf, NIVEL_SEGUNDA_HOJA } from "../src/lib/boleta-pdf.mjs";
 import { extractPdfText } from "./_pdf-text.mjs";
 
 const b64 = "MIIBnTCCAQYCQ" + "AbCd0123+/9z".repeat(13) + "==";
@@ -123,7 +123,7 @@ test("una boleta larga se aprieta antes de soltar nada, y sigue en una hoja", as
     bloques: [{ filas: [1, 2, 3, 4, 5, 6, 7, 8].map(fila).concat([{ label: "TOTAL", valor: "$ 8.000", enfasis: true }]) }],
   });
   assert.equal(r.hojas, 1);
-  assert.ok(r.nivel >= 1 && r.nivel < 5, `nivel ${r.nivel}`);
+  assert.ok(r.nivel >= 1 && r.nivel < NIVEL_SEGUNDA_HOJA, `nivel ${r.nivel}`);
   assert.match(r.texto, /Timbre Electrónico SII/);
   assert.match(r.texto, /Vence/);
 });
@@ -136,7 +136,7 @@ test("lo que no cabe ni apretado pasa el timbre y el pie a una segunda hoja, com
     bloques: [{ filas: Array.from({ length: 24 }, (_, i) => fila(i + 1)) }],
     notas: ["Nota uno", "Nota dos", "Nota tres", "Nota cuatro"],
   });
-  assert.equal(r.nivel, 5);
+  assert.equal(r.nivel, NIVEL_SEGUNDA_HOJA);
   assert.equal(r.hojas, 2);
   assert.match(r.texto, /Timbre Electrónico SII/);
   assert.match(r.texto, /Vence/);

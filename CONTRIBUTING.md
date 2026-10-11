@@ -41,8 +41,8 @@ Necesitas [Deno](https://deno.com) 2.x y Node 24 (solo para el servicio de PDF).
 
 ```bash
 deno task check     # typecheck del motor
-deno task test      # 228 tests del motor
-cd pdf-service && npm install && npm test   # 92 tests del PDF y del timbre
+deno task test      # 230 tests del motor
+cd pdf-service && npm install && npm test   # 99 tests del PDF y del timbre
 ```
 
 No hace falta certificado, ni CAF, ni conexión al SII: la suite completa corre

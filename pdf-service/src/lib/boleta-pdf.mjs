@@ -124,6 +124,15 @@ function roundRectPath(w, h, r) {
  * @property {string[]} [notas]
  *   Líneas informativas al pie de los totales que NO suman al total
  *   (p.ej. pagos recibidos desde la última facturación).
+ * @property {{valor:string, filas?:{label:string, valor?:string, sub?:string}[]}} [totalAPagar]
+ *   Cuando lo que hay que pagar NO es el total del documento (se suma un saldo
+ *   anterior, la cuota de un convenio). El total del documento pasa a ser una
+ *   fila ("Total de esta boleta"), debajo van `filas` (hasta 4) y el número
+ *   grande y la franja de vencimiento muestran `valor`. Sin esto el papel decía
+ *   "TOTAL A PAGAR" dos veces, con dos montos.
+ * @property {{titulo?:string, lineas:string[]}} [pago]
+ *   Cómo pagar (p.ej. la cuenta para transferir): un título y hasta 4 líneas,
+ *   en un recuadro a la derecha del timbre. Cada línea se parte si no cabe.
  */
 
 /**
@@ -189,9 +198,13 @@ export async function generateBoletaElectronicaPdf(input) {
   //   0  normal
   //   1  menos aire ENTRE secciones (lo primero que se cede: no cuesta lectura)
   //   2  además, la escalera de cargos más junta
-  //   3  además, sin la tabla de tarifas
-  //   4  además, sin el gráfico
-  //   5  el timbre y el pie pasan a una segunda hoja (cabe siempre)
+  //   3  además, todo a interlínea mínima (sigue sin soltar contenido)
+  //   4  además, sin la tabla de tarifas
+  //   5  además, sin el gráfico
+  //   6  el timbre y el pie pasan a una segunda hoja (cabe siempre)
+  // El nivel 3 existe porque soltar la tabla o el gráfico no acorta la columna
+  // de los cargos: una boleta con saldo anterior, convenio y subsidio se pasaba
+  // por menos de un punto y se iba a dos hojas con el panel izquierdo intacto.
   for (let nivel = 0; nivel < NIVEL_SEGUNDA_HOJA; nivel++) {
     const intento = await dibujarBoleta(input, nivel);
     if (!intento.desborda) return { pdf: intento.pdf, xDimMils: intento.xDimMils, nivel };
@@ -200,7 +213,9 @@ export async function generateBoletaElectronicaPdf(input) {
   return { pdf: ultimo.pdf, xDimMils: ultimo.xDimMils, nivel: NIVEL_SEGUNDA_HOJA };
 }
 
-const NIVEL_SEGUNDA_HOJA = 5;
+const NIVEL_SIN_TARIFAS = 4;
+const NIVEL_SIN_GRAFICO = 5;
+export const NIVEL_SEGUNDA_HOJA = 6;
 
 /**
  * La escala de espaciado de cada nivel, en puntos. Un solo lugar: antes cada
@@ -217,6 +232,7 @@ const ESPACIADO = [
   { seccion: 18, dato: 14, fila: 13.5, sub: 9.5, trasSub: 13.5, corte: 4, aire: 16 },
   { seccion: 12, dato: 12.5, fila: 13.5, sub: 9.5, trasSub: 13.5, corte: 4, aire: 8 },
   { seccion: 10, dato: 12, fila: 12, sub: 8.5, trasSub: 12, corte: 3, aire: 6 },
+  { seccion: 7, dato: 11.5, fila: 11.5, sub: 8, trasSub: 11.5, corte: 2, aire: 4 },
 ];
 
 async function dibujarBoleta(input, nivel) {
@@ -284,10 +300,8 @@ async function dibujarBoleta(input, nivel) {
   textC(sii ? `S.I.I. — ${sii} · DTE ${tipoDte}` : `DTE ${tipoDte}`, rbCx, rbTop - rbH + 8, 8, bold, C.red);
 
   // ── Bloque emisor (izquierda) ────────────────────────────────────────────
-  text(input.emisor.razonSocial || "", MARGIN, y - 8, 15, bold, C.deepGreen);
-  let ey = y - 26;
-  // "Giro: <valor>" con label en bold y valor normal. El valor se ENVUELVE para
-  // no invadir el recuadro rojo del SII (a la derecha): se acota a emisorMaxX.
+  // Lo de la izquierda se ENVUELVE para no invadir el recuadro rojo del SII (a
+  // la derecha): se acota a emisorMaxX.
   const emisorMaxX = rbX - 14;
   const wrapToWidth = (s, f, size, maxW) => {
     const out = [];
@@ -300,6 +314,17 @@ async function dibujarBoleta(input, nivel) {
     if (line) out.push(line);
     return out;
   };
+  // El nombre también: "Comité de Agua Potable Rural Quebrada Imaginaria" a 15pt
+  // se escribía encima del recuadro. Va en dos líneas; si ni así cabe, más chico.
+  const nombreEmisor = String(input.emisor.razonSocial || "");
+  let nombreSize = 15;
+  let nombreLineas = wrapToWidth(nombreEmisor, bold, nombreSize, emisorMaxX - MARGIN);
+  if (nombreLineas.length > 2) {
+    nombreSize = 12;
+    nombreLineas = wrapToWidth(nombreEmisor, bold, nombreSize, emisorMaxX - MARGIN).slice(0, 2);
+  }
+  nombreLineas.forEach((linea, i) => text(linea, MARGIN, y - 8 - i * (nombreSize + 2), nombreSize, bold, C.deepGreen));
+  let ey = y - 26 - Math.max(0, nombreLineas.length - 1) * (nombreSize + 2);
   const labeled = (label, value) => {
     if (!value) return;
     const lab = `${label}: `;
@@ -510,7 +535,7 @@ async function dibujarBoleta(input, nivel) {
   const puntos = (Array.isArray(rep.historial?.puntos) ? rep.historial.puntos : [])
     .filter((p) => p && Number.isFinite(Number(p.valor)) && Number(p.valor) >= 0)
     .slice(-12);
-  if (puntos.length >= 2 && nivel < 4) {
+  if (puntos.length >= 2 && nivel < NIVEL_SIN_GRAFICO) {
     // La unidad va junto al título: suelta en la otra esquina no se leía de qué era.
     const unidad = String(rep.historial.unidad || "").slice(0, 6);
     const tituloHist = String(rep.historial.titulo || "Historial").slice(0, 46);
@@ -546,7 +571,7 @@ async function dibujarBoleta(input, nivel) {
   const filasTarifa = (Array.isArray(rep.tarifario?.filas) ? rep.tarifario.filas : [])
     .filter((f) => f && f.label && f.valor)
     .slice(0, 10);
-  if (filasTarifa.length > 0 && nivel < 3) {
+  if (filasTarifa.length > 0 && nivel < NIVEL_SIN_TARIFAS) {
     text(String(rep.tarifario.titulo || "Tarifas").slice(0, 46), panelX, panelY, 8, bold, C.brandGreen);
     panelY -= 12;
     for (const f of filasTarifa) {
@@ -585,11 +610,27 @@ async function dibujarBoleta(input, nivel) {
   } else if (tipoDte === 41) {
     money("IVA (servicio exento)", "$ 0");
   }
+  // Lo que hay que pagar no siempre es el total del documento: con un saldo
+  // anterior o la cuota de un convenio, el documento es una fila más y el número
+  // grande es la suma. Un solo "TOTAL A PAGAR" en la hoja.
+  const tap = rep.totalAPagar && typeof rep.totalAPagar === "object" && rep.totalAPagar.valor
+    ? rep.totalAPagar
+    : null;
+  const totalAPagar = tap ? String(tap.valor).slice(0, 24) : fmtCLP(t.total);
+  if (tap) {
+    y -= sp.corte;
+    page.drawLine({ start: { x: totLabelX, y: y + 10 }, end: { x: RIGHT, y: y + 10 }, thickness: 0.5, color: C.line });
+    money("Total de esta boleta", fmtCLP(t.total), { bold: true });
+    for (const fila of (Array.isArray(tap.filas) ? tap.filas : []).slice(0, 4)) {
+      if (!fila || !fila.label) continue;
+      money(String(fila.label).slice(0, 46), fila.valor, { sub: fila.sub });
+    }
+  }
   y -= 3;
   page.drawLine({ start: { x: totLabelX, y: y + 4 }, end: { x: RIGHT, y: y + 4 }, thickness: 1.2, color: C.brandGreen });
   y -= 10;
   text("TOTAL A PAGAR", totLabelX, y, 12, bold, C.deepGreen);
-  textR(fmtCLP(t.total), RIGHT, y, 14, bold, C.deepGreen);
+  textR(totalAPagar, RIGHT, y, 14, bold, C.deepGreen);
   // 15pt: la nota de abajo corre por la izquierda, bajo el rótulo del total.
   y -= 15;
   // Lo que sigue (notas y timbre) va bajo lo MÁS bajo de las dos columnas: con
@@ -627,7 +668,23 @@ async function dibujarBoleta(input, nivel) {
     (input.watermarkNote || input.watermark ? 11 : 0) +
     (input.vencimiento || rep.leyendaVencimiento ? 42 : 0);
   const aireBajoTimbre = sp.aire;
-  const altoTimbre = QZ + Math.max(drawH + QZ, 29) + aireBajoTimbre;
+  // Cómo pagar: un recuadro a la derecha del timbre, bajo su leyenda. Es el
+  // único hueco de la hoja; ahí no le quita alto a nada. Empieza donde la
+  // leyenda, pasada la zona quieta del código.
+  const capX = tbX + drawW + QZ + 4;
+  const PAGO_PAD = 8;
+  const pagoAncho = RIGHT - capX;
+  const pagoLineas = (rep.pago && Array.isArray(rep.pago.lineas) ? rep.pago.lineas : [])
+    .filter((l) => typeof l === "string" && l.trim())
+    .slice(0, 4)
+    .flatMap((l) => wrapToWidth(l.trim(), font, 8.5, pagoAncho - 2 * PAGO_PAD))
+    .slice(0, 6);
+  const pagoTitulo = pagoLineas.length > 0 && rep.pago.titulo ? String(rep.pago.titulo).slice(0, 46) : "";
+  const pagoAlto = pagoLineas.length > 0 ? 2 * PAGO_PAD + (pagoTitulo ? 11 : 0) + pagoLineas.length * 10.5 - 3 : 0;
+  // Lo que ocupa la columna de la derecha: las tres líneas de la leyenda y, si
+  // hay, el recuadro.
+  const altoLeyenda = 29 + (pagoAlto > 0 ? 9 + pagoAlto : 0);
+  const altoTimbre = QZ + Math.max(drawH + QZ, altoLeyenda) + aireBajoTimbre;
   let desborda = afterTotalsY - altoTimbre < reservaPie;
   if (desborda && nivel >= NIVEL_SEGUNDA_HOJA) {
     page = doc.addPage([PAGE_W, PAGE_H]);
@@ -640,7 +697,6 @@ async function dibujarBoleta(input, nivel) {
   });
   page.drawSvgPath(bc.path, { x: tbX, y: tbTop, scale: sc, color: C.black });
 
-  const capX = tbX + drawW + QZ + 4;
   let capY = tbTop - 4;
   text("Timbre Electrónico SII", capX, capY, 9, bold, C.deepGreen);
   capY -= 13;
@@ -649,6 +705,20 @@ async function dibujarBoleta(input, nivel) {
   text(`${resol}Verifique este documento en ${displayUrl}`, capX, capY, 7.5, font, C.gray);
   capY -= 12;
   text(`Folio ${input.folio} · DTE ${tipoDte} · ${String(input.emisor.razonSocial || "").slice(0, 42)}`, capX, capY, 7.5, font, C.gray);
+  if (pagoAlto > 0) {
+    const pagoTop = capY - 9;
+    roundRect(capX, pagoTop, pagoAncho, pagoAlto, 5, { fill: C.cardBg, border: C.cardBorder, borderW: 0.8 });
+    let py = pagoTop - PAGO_PAD - 6;
+    if (pagoTitulo) {
+      text(pagoTitulo, capX + PAGO_PAD, py, 8, bold, C.brandGreen);
+      py -= 11;
+    }
+    for (const linea of pagoLineas) {
+      text(linea, capX + PAGO_PAD, py, 8.5, font, C.gray);
+      py -= 10.5;
+    }
+    capY = pagoTop - pagoAlto;
+  }
 
   // Punto más bajo de la fila del timbre (incluye la quiet zone inferior).
   let belowY = Math.min(tbTop - drawH - QZ, capY) - aireBajoTimbre;
@@ -689,7 +759,7 @@ async function dibujarBoleta(input, nivel) {
       cx += bold.widthOfTextAtSize(fecha, 10);
     }
     text(` · ${nota}`, cx, ty, 10, font, C.gray);
-    textR(fmtCLP(t.total), RIGHT - 14, stripTop - 21, 14, bold, C.brandGreen);
+    textR(totalAPagar, RIGHT - 14, stripTop - 21, 14, bold, C.brandGreen);
     belowY -= stripH + 12;
   }
 

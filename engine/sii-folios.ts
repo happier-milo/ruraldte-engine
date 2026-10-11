@@ -129,19 +129,30 @@ export class RuralDteFolioError extends Error {
   stage: FolioStage;
   reachedGrant: boolean;
   trace: TraceEntry[];
+  /**
+   * El SII no contestó: la conexión se cortó o venció el plazo antes de abrir la sesión.
+   * No es lo mismo que una sesión que el SII no quiso abrir: eso puede ser el
+   * certificado, y esto se pasa solo. Solo se marca antes del otorgamiento.
+   */
+  sinRespuesta: boolean;
   constructor(
     stage: FolioStage,
     message: string,
     reachedGrant: boolean,
     trace: TraceEntry[],
+    sinRespuesta = false,
   ) {
     super(message);
     this.name = "RuralDteFolioError";
     this.stage = stage;
     this.reachedGrant = reachedGrant;
     this.trace = trace;
+    this.sinRespuesta = sinRespuesta;
   }
 }
+
+/** El SII contestó, pero no dejó una sesión abierta. */
+class SinSesionDelSii extends Error {}
 
 /**
  * Un paso HTTP de la sesión, guardado para diagnóstico. Los cuerpos que superan los 8.000
@@ -442,7 +453,7 @@ async function authenticate(session: SiiSession, referenceUrl: string): Promise<
     next = (await session.fetch(`auth_hop${i}`, session.abs(next))).location;
   }
   if (!session.has("TOKEN") && !session.has("CSESSIONID")) {
-    throw new Error(`auth sin cookie de sesión (cookies: ${session.cookies().join(",")})`);
+    throw new SinSesionDelSii(`auth sin cookie de sesión (cookies: ${session.cookies().join(",")})`);
   }
 }
 
@@ -468,11 +479,16 @@ export async function openSiiSession(
       lastErr = err;
     }
   }
+  // Lo que lanza `session.fetch` es la red (conexión cortada, plazo vencido): el SII no
+  // contestó. El 10-oct-2026 el portal de certificación cortó la conexión en los tres
+  // intentos y a los dos minutos y medio ya respondía; se leía como "rechazó la
+  // autenticación con el certificado".
   throw new RuralDteFolioError(
     "auth",
     `auth falló tras ${attempts} intentos: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
     false,
     trace,
+    !(lastErr instanceof SinSesionDelSii),
   );
 }
 

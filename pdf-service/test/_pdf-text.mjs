@@ -25,6 +25,15 @@ function unescapeLiteral(s) {
 
 /** @param {Uint8Array} bytes @returns {string} todo el texto dibujado, en orden */
 export function extractPdfText(bytes) {
+  return extractPdfLines(bytes).join(" ");
+}
+
+/**
+ * Lo mismo, de a un trozo dibujado: cada elemento es lo que se escribió de una
+ * vez (una línea, una celda). Sirve para saber si un texto largo se partió.
+ * @param {Uint8Array} bytes @returns {string[]}
+ */
+export function extractPdfLines(bytes) {
   const buf = Buffer.from(bytes);
   const chunks = [];
   for (let i = 0;;) {
@@ -60,5 +69,5 @@ export function extractPdfText(bytes) {
       out.push(unescapeLiteral(m[2]));
     }
   }
-  return out.join(" ");
+  return out;
 }

@@ -246,11 +246,11 @@ que ahorran semanas:
 ## Tests
 
 ```bash
-deno task check && deno task test          # 228 tests del motor
-cd pdf-service && npm install && npm test  #  92: PDF + timbre
+deno task check && deno task test          # 230 tests del motor
+cd pdf-service && npm install && npm test  #  99: PDF + timbre
 ```
 
-320 tests (228 + 92), todos offline. No son de humo: verifican firmas RSA de verdad,
+329 tests (230 + 99), todos offline. No son de humo: verifican firmas RSA de verdad,
 comparan el `<DD>` byte a byte contra el de un proveedor certificado, validan
 contra los XSD v2.5 oficiales del SII y decodifican el PDF417 del PDF de vuelta
 al TED que le dio origen.
@@ -286,7 +286,7 @@ invoices) and has been issuing in production since June 2026. It also covers the
 three statutory books, invoice assignment for factoring (AEC), Law 19.983
 acknowledgements, and PDF rendering with the PDF417 stamp.
 
-Two dependencies, no build step, 320 offline tests (228 + 92). Credentials travel per
+Two dependencies, no build step, 329 offline tests (230 + 99). Credentials travel per
 request: the engine is stateless and knows nothing about databases. Everything a
 Chilean taxpayer needs to issue on their own is here; persistence, multi-tenancy,
 atomic folio assignment and certificate custody live in the hosted service and
