@@ -121,6 +121,10 @@ function roundRectPath(w, h, r) {
  * @property {{titulo?:string, filas:{label:string, valor:string}[]}} [tarifario]
  *   Tabla chica de etiqueta y valor (hasta 10 filas) bajo el historial: la
  *   tarifa vigente completa, no solo lo cobrado.
+ * @property {{titulo?:string, filas:{tramo:string, m3:string, valor:string, total:string}[], facturado?:{label?:string, m3:string, total:string}}} [calculoConsumo]
+ *   Cálculo de consumo por tramo, con el formato del ejemplo del Manual de
+ *   Facturación SSR: TRAMOS / M3 / VALOR ($) / TOTAL y una fila Facturado.
+ *   Reemplaza a `tarifario` cuando viene: muestra lo cobrado, no toda la tarifa.
  * @property {string[]} [notas]
  *   Líneas informativas al pie de los totales que NO suman al total
  *   (p.ej. pagos recibidos desde la última facturación).
@@ -568,7 +572,44 @@ async function dibujarBoleta(input, nivel) {
     });
     panelY = baseY - 26;
   }
-  const filasTarifa = (Array.isArray(rep.tarifario?.filas) ? rep.tarifario.filas : [])
+  // Cálculo de consumo por tramo (ejemplo del Manual de Facturación SSR).
+  // Reemplaza la tabla de tarifas: muestra los tramos que se cobraron, con m³,
+  // valor unitario y total, y la fila Facturado.
+  const calculo = rep.calculoConsumo;
+  const filasCalculo = (Array.isArray(calculo?.filas) ? calculo.filas : [])
+    .filter((f) => f && f.tramo)
+    .slice(0, 7);
+  if (filasCalculo.length > 0) {
+    text(String(calculo.titulo || "Cálculo de consumo").slice(0, 46), panelX, panelY, 8, bold, C.brandGreen);
+    panelY -= 12;
+    const cTramo = panelX + 3;
+    const cM3 = panelX + panelW * 0.46;
+    const cValor = panelX + panelW * 0.65;
+    const cTotal = panelX + panelW;
+    page.drawRectangle({ x: panelX, y: panelY - 1, width: panelW, height: 11, color: C.deepGreen });
+    text("TRAMOS", cTramo, panelY + 2, 6.2, bold, C.white);
+    textR("M3", cM3, panelY + 2, 6.2, bold, C.white);
+    textR("VALOR ($)", cValor, panelY + 2, 6.2, bold, C.white);
+    textR("TOTAL", cTotal, panelY + 2, 6.2, bold, C.white);
+    panelY -= 12;
+    for (const f of filasCalculo) {
+      text(String(f.tramo).slice(0, 22), cTramo, panelY, 6.5, font, C.gray);
+      textR(String(f.m3 ?? "").slice(0, 8), cM3, panelY, 6.5, font, C.black);
+      textR(String(f.valor ?? "").slice(0, 12), cValor, panelY, 6.5, font, C.black);
+      textR(String(f.total ?? "").slice(0, 12), cTotal, panelY, 6.5, font, C.black);
+      panelY -= 9.5;
+    }
+    const fact = calculo.facturado;
+    if (fact) {
+      page.drawLine({ start: { x: panelX, y: panelY + 6 }, end: { x: panelX + panelW, y: panelY + 6 }, thickness: 0.5, color: C.line });
+      text(String(fact.label || "Facturado").slice(0, 22), cTramo, panelY - 2, 7, bold, C.black);
+      textR(String(fact.m3 ?? "").slice(0, 8), cM3, panelY - 2, 7, bold, C.black);
+      textR(String(fact.total ?? "").slice(0, 12), cTotal, panelY - 2, 7, bold, C.black);
+      panelY -= 12;
+    }
+    panelY -= 6;
+  }
+  const filasTarifa = calculo ? [] : (Array.isArray(rep.tarifario?.filas) ? rep.tarifario.filas : [])
     .filter((f) => f && f.label && f.valor)
     .slice(0, 10);
   if (filasTarifa.length > 0 && nivel < NIVEL_SIN_TARIFAS) {
