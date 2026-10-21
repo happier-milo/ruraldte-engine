@@ -22,6 +22,8 @@
 
 import { degrees, PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { buildTedPdf417, TIMBRE_MAX_H_PT, TIMBRE_MAX_W_PT } from "./pdf417.mjs";
+import { buildQr, QR_ZONA_QUIETA } from "./qr.mjs";
+import { incrustarLogoEmisor, LOGO_AIRE } from "./logo-emisor.mjs";
 import { resolveSiiOficina } from "./sii-oficinas.mjs";
 
 const MILS_PER_PT = 1000 / 72; // 1 pt = 1000/72 mils
@@ -58,6 +60,31 @@ const MESES = [
 ];
 
 const fmtCLP = (v) => "$ " + Math.round(Number(v) || 0).toLocaleString("es-CL");
+
+/**
+ * Las líneas `<DscRcgGlobal>` de un documento, listas para dibujar.
+ *
+ * El SII escribe la glosa con el signo pegado ("Subsidio (-)", "Otros Descuentos
+ * (-)"); en el papel el signo va adelante del monto, igual que en las filas de
+ * cargos del emisor. Una línea sin monto no se dibuja: un descuento de $0, o un
+ * campo que llegó vacío, es ruido en la hoja.
+ *
+ * `"%"` se imprime como porcentaje y no como monto a propósito: el papel no sabe
+ * sobre qué base se aplicó, y un número en pesos inventado sería peor que el
+ * porcentaje que el documento declara.
+ */
+function descuentosDelDocumento(lista) {
+  if (!Array.isArray(lista)) return [];
+  return lista
+    .filter((d) => d && Number.isFinite(Number(d.valor)) && Number(d.valor) > 0)
+    .map((d) => ({
+      tipo: d.tipo === "R" ? "R" : "D",
+      monto: d.valorTipo === "%" ? `${Number(d.valor)}%` : fmtCLP(d.valor),
+      glosa: String(d.glosa || (d.tipo === "R" ? "Recargo" : "Descuento"))
+        .replace(/\s*\(\s*[-+]\s*\)\s*$/, "")
+        .slice(0, 46),
+    }));
+}
 const fmtNum = (v) => Math.round(Number(v) || 0).toLocaleString("es-CL");
 /**
  * Cantidades que NO son plata (m³ leídos, m³ facturados): hasta 2 decimales y
@@ -134,7 +161,7 @@ function roundRectPath(w, h, r) {
  *   fila ("Total de esta boleta"), debajo van `filas` (hasta 4) y el número
  *   grande y la franja de vencimiento muestran `valor`. Sin esto el papel decía
  *   "TOTAL A PAGAR" dos veces, con dos montos.
- * @property {{titulo?:string, lineas:string[]}} [pago]
+ * @property {{titulo?:string, lineas:string[], qr?:string, qrLeyenda?:string}} [pago]
  *   Cómo pagar (p.ej. la cuenta para transferir): un título y hasta 4 líneas,
  *   en un recuadro a la derecha del timbre. Cada línea se parte si no cabe.
  */
@@ -144,7 +171,9 @@ function roundRectPath(w, h, r) {
  * @property {39|41} tipoDte
  * @property {number} folio
  * @property {string} fechaEmision         ISO "AAAA-MM-DD"
- * @property {{rut:string, razonSocial:string, giro?:string, direccion?:string, comuna?:string, region?:string, email?:string}} emisor
+ * @property {{rut:string, razonSocial:string, giro?:string, direccion?:string, comuna?:string, region?:string, email?:string, logo?:{base64:string}}} emisor
+ *   `logo`: el logo PROPIO del emisor (JPEG o PNG en base64). Va arriba a la
+ *   izquierda, al lado de sus datos (ver logo-emisor.mjs). Sin él, como siempre.
  * @property {string} [siiSucursal]        unidad SII; default emisor.comuna
  * @property {{rut?:string, nombre?:string, direccion?:string, esSocio?:boolean}} [receptor]
  *   `esSocio` decide el rótulo de la tarjeta: true → "RECEPTOR (SOCIO)",
@@ -209,15 +238,47 @@ export async function generateBoletaElectronicaPdf(input) {
   // El nivel 3 existe porque soltar la tabla o el gráfico no acorta la columna
   // de los cargos: una boleta con saldo anterior, convenio y subsidio se pasaba
   // por menos de un punto y se iba a dos hojas con el panel izquierdo intacto.
+  //
+  // A dónde mandar el comprobante (`pago.comprobante`) es lo primero que se
+  // suelta: si un nivel no cabe con él, se prueba ese mismo nivel sin él antes
+  // de apretar más la hoja. Así una boleta nunca pierde la tabla de tarifas, el
+  // gráfico ni una hoja por esa línea.
+  const sinComprobante = input.representacion?.pago?.comprobante
+    ? {
+      ...input,
+      representacion: {
+        ...input.representacion,
+        pago: { ...input.representacion.pago, comprobante: undefined },
+      },
+    }
+    : null;
   for (let nivel = 0; nivel < NIVEL_SEGUNDA_HOJA; nivel++) {
     const intento = await dibujarBoleta(input, nivel);
     if (!intento.desborda) return { pdf: intento.pdf, xDimMils: intento.xDimMils, nivel };
+    if (sinComprobante) {
+      const sinEl = await dibujarBoleta(sinComprobante, nivel);
+      if (!sinEl.desborda) return { pdf: sinEl.pdf, xDimMils: sinEl.xDimMils, nivel };
+    }
   }
-  const ultimo = await dibujarBoleta(input, NIVEL_SEGUNDA_HOJA);
+  const ultimo = await dibujarBoleta(sinComprobante ?? input, NIVEL_SEGUNDA_HOJA);
   return { pdf: ultimo.pdf, xDimMils: ultimo.xDimMils, nivel: NIVEL_SEGUNDA_HOJA };
 }
 
 const NIVEL_SIN_TARIFAS = 4;
+
+/**
+ * A dónde mandar el comprobante (`pago.comprobante`, un correo), al final del
+ * recuadro de pago (15-oct-2026). Si no cabe, se suelta antes que cualquier otra
+ * cosa (ver `generateBoletaElectronicaPdf`). Y va solo si el correo cabe entero
+ * en una línea: `wrapToWidth` no parte una palabra, y un correo más ancho que el
+ * texto quedaría tapado por el QR. Uno cortado es peor que ninguno.
+ */
+function lineasDelComprobante(pago, font, ancho, partir) {
+  const correo = pago && typeof pago.comprobante === "string" ? pago.comprobante.trim() : "";
+  if (!correo || /\s/.test(correo)) return [];
+  if (font.widthOfTextAtSize(correo, 8.5) > ancho) return [];
+  return partir(`Envía el comprobante a ${correo}`, font, 8.5, ancho);
+}
 const NIVEL_SIN_GRAFICO = 5;
 export const NIVEL_SEGUNDA_HOJA = 6;
 
@@ -243,6 +304,7 @@ async function dibujarBoleta(input, nivel) {
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const logoEmisor = await incrustarLogoEmisor(doc, input.emisor?.logo);
   // `let`: en el último nivel el timbre y el pie se dibujan en una hoja nueva,
   // y los ayudantes de abajo escriben siempre en la hoja en curso.
   let page = doc.addPage([PAGE_W, PAGE_H]);
@@ -268,6 +330,22 @@ async function dibujarBoleta(input, nivel) {
     page.drawText(String(s), { x: xR - f.widthOfTextAtSize(String(s), size), y, size, font: f, color });
   const textC = (s, cx, y, size, f = font, color = C.black) =>
     page.drawText(String(s), { x: cx - f.widthOfTextAtSize(String(s), size) / 2, y, size, font: f, color });
+  // Una línea que lleva un nombre que puede ser largo (el del emisor). Entra
+  // entera achicando la letra hasta `minSize`; si ni así cabe, el nombre se
+  // corta en una palabra completa. Antes se cortaba a un número fijo de letras:
+  // "Comité de Agua Potable Rural Quebrada Imaginaria" salía "…Quebrada Imag".
+  const lineaQueCabe = (armar, nombre, maxW, size, minSize, f = font) => {
+    for (let t = size; t >= minSize - 0.01; t -= 0.25) {
+      if (f.widthOfTextAtSize(armar(nombre), t) <= maxW) return { texto: armar(nombre), size: t };
+    }
+    const palabras = String(nombre).split(/\s+/).filter(Boolean);
+    while (palabras.length > 1) {
+      palabras.pop();
+      const corto = armar(palabras.join(" "));
+      if (f.widthOfTextAtSize(corto, minSize) <= maxW) return { texto: corto, size: minSize };
+    }
+    return { texto: armar(String(palabras[0] ?? "").slice(0, 24)), size: minSize };
+  };
   const roundRect = (x, yTop, w, h, r, { fill, border, borderW = 0 } = {}) =>
     page.drawSvgPath(roundRectPath(w, h, r), {
       x, y: yTop, color: fill, borderColor: border, borderWidth: borderW,
@@ -307,6 +385,16 @@ async function dibujarBoleta(input, nivel) {
   // Lo de la izquierda se ENVUELVE para no invadir el recuadro rojo del SII (a
   // la derecha): se acota a emisorMaxX.
   const emisorMaxX = rbX - 14;
+  // Con logo, el logo va en la esquina y los datos a su derecha: el bloque no
+  // crece hacia abajo (el logo es más bajo que el recuadro rojo) y nada de lo
+  // que pide el manual se corre de lugar ni queda tapado.
+  let ex = MARGIN;
+  if (logoEmisor) {
+    page.drawImage(logoEmisor.img, {
+      x: MARGIN, y: y + 6 - logoEmisor.h, width: logoEmisor.w, height: logoEmisor.h,
+    });
+    ex = MARGIN + logoEmisor.w + LOGO_AIRE;
+  }
   const wrapToWidth = (s, f, size, maxW) => {
     const out = [];
     let line = "";
@@ -318,34 +406,34 @@ async function dibujarBoleta(input, nivel) {
     if (line) out.push(line);
     return out;
   };
-  // El nombre también: "Comité de Agua Potable Rural Quebrada Imaginaria" a 15pt
+  // El nombre también: "Comité de Agua Potable Rural Quebrada Alvarado" a 15pt
   // se escribía encima del recuadro. Va en dos líneas; si ni así cabe, más chico.
   const nombreEmisor = String(input.emisor.razonSocial || "");
   let nombreSize = 15;
-  let nombreLineas = wrapToWidth(nombreEmisor, bold, nombreSize, emisorMaxX - MARGIN);
+  let nombreLineas = wrapToWidth(nombreEmisor, bold, nombreSize, emisorMaxX - ex);
   if (nombreLineas.length > 2) {
     nombreSize = 12;
-    nombreLineas = wrapToWidth(nombreEmisor, bold, nombreSize, emisorMaxX - MARGIN).slice(0, 2);
+    nombreLineas = wrapToWidth(nombreEmisor, bold, nombreSize, emisorMaxX - ex).slice(0, 2);
   }
-  nombreLineas.forEach((linea, i) => text(linea, MARGIN, y - 8 - i * (nombreSize + 2), nombreSize, bold, C.deepGreen));
+  nombreLineas.forEach((linea, i) => text(linea, ex, y - 8 - i * (nombreSize + 2), nombreSize, bold, C.deepGreen));
   let ey = y - 26 - Math.max(0, nombreLineas.length - 1) * (nombreSize + 2);
   const labeled = (label, value) => {
     if (!value) return;
     const lab = `${label}: `;
     const labW = bold.widthOfTextAtSize(lab, 9.5);
-    text(lab, MARGIN, ey, 9.5, bold, C.gray);
-    const lines = wrapToWidth(value, font, 9.5, emisorMaxX - MARGIN - labW);
-    text(lines[0] ?? "", MARGIN + labW, ey, 9.5, font, C.gray);
+    text(lab, ex, ey, 9.5, bold, C.gray);
+    const lines = wrapToWidth(value, font, 9.5, emisorMaxX - ex - labW);
+    text(lines[0] ?? "", ex + labW, ey, 9.5, font, C.gray);
     ey -= 15;
     for (let i = 1; i < lines.length; i++) {
-      text(lines[i], MARGIN + labW, ey, 9.5, font, C.gray);
+      text(lines[i], ex + labW, ey, 9.5, font, C.gray);
       ey -= 15;
     }
   };
   labeled("Giro", input.emisor.giro);
   labeled("Dirección", input.emisor.direccion);
   const reg = [input.emisor.region, input.emisor.email].filter(Boolean).join(" · ");
-  if (reg) { text(reg, MARGIN, ey, 9.5, font, C.gray); ey -= 15; }
+  if (reg) { text(reg, ex, ey, 9.5, font, C.gray); ey -= 15; }
   // §2.i — teléfono de atención de consultas y emergencias + horario de atención.
   // El dato existe hace rato en community_billing_settings y el chequeo 14 del
   // validador lo exige; hasta ahora no se imprimía.
@@ -578,8 +666,8 @@ async function dibujarBoleta(input, nivel) {
     panelY = baseY - 26;
   }
   // Cálculo de consumo por tramo (ejemplo del Manual de Facturación SSR).
-  // Reemplaza la tabla de tarifas: muestra los tramos que se cobraron, con m³,
-  // valor unitario y total, y la fila Facturado.
+  // Reemplaza la tabla de tarifas: muestra los tramos cobrados con m³, valor
+  // unitario y total, y la fila Facturado.
   const calculo = rep.calculoConsumo;
   const filasCalculo = (Array.isArray(calculo?.filas) ? calculo.filas : [])
     .filter((f) => f && f.tramo)
@@ -649,6 +737,16 @@ async function dibujarBoleta(input, nivel) {
     }
   }
 
+  // ── Descuentos y recargos globales del DTE (Formato SII, DscRcgGlobal) ───
+  // Van acá: entre los conceptos del emisor y los totales tributarios, que es
+  // donde entran en la cuenta del documento. El `<DscRcgGlobal>` del XML ya está
+  // restado (o sumado) en MntExe/MntTotal, así que estas filas son las que
+  // explican por qué el total no es la suma del detalle. Sin descuentos no se
+  // dibuja nada: la boleta sin ellos sale exactamente igual que siempre.
+  for (const d of descuentosDelDocumento(input.descuentosGlobales)) {
+    money(d.glosa, `${d.tipo === "R" ? "+" : "-"} ${d.monto}`);
+  }
+
   if (Number(t.exento) > 0) money("Monto exento", fmtCLP(t.exento));
   if (Number(t.neto) > 0) {
     money("Monto neto", fmtCLP(t.neto));
@@ -714,23 +812,55 @@ async function dibujarBoleta(input, nivel) {
     (input.watermarkNote || input.watermark ? 11 : 0) +
     (input.vencimiento || rep.leyendaVencimiento ? 42 : 0);
   const aireBajoTimbre = sp.aire;
-  // Cómo pagar: un recuadro a la derecha del timbre, bajo su leyenda. Es el
-  // único hueco de la hoja; ahí no le quita alto a nada. Empieza donde la
-  // leyenda, pasada la zona quieta del código.
-  const capX = tbX + drawW + QZ + 4;
+  // Cómo pagar: un recuadro a la derecha del timbre. El timbre y su leyenda
+  // van en la columna izquierda: la leyenda DEBAJO del código, no al lado
+  // (pedido del founder, 21-oct-2026).
+  const pagoX = tbX + drawW + QZ + 4;
   const PAGO_PAD = 8;
-  const pagoAncho = RIGHT - capX;
+  const pagoAncho = RIGHT - pagoX;
+  // Un QR del emisor (su cuenta, su portal de pago), adentro del recuadro y a la
+  // derecha del texto. Es opcional: sin `pago.qr` el recuadro queda como estaba.
+  // Con su zona quieta mide 62 pt (2,2 cm): un QR de 37 módulos sale a unos
+  // 0,48 mm por módulo, que una cámara de teléfono lee sin acercarse.
+  const QR_LADO = 62;
+  const qrTexto = rep.pago && typeof rep.pago.qr === "string" ? rep.pago.qr.trim() : "";
+  const qr = qrTexto ? await buildQr(qrTexto) : null;
+  const qrLeyenda = qr && rep.pago.qrLeyenda ? String(rep.pago.qrLeyenda).slice(0, 22) : "";
+  // El texto cede el ancho del QR. Como se parte en más líneas, se le dejan más
+  // antes de cortar: lo que no puede pasar es que se pierda el número de cuenta.
+  // Hasta cinco líneas de entrada: una comunidad con dos cuentas de titulares
+  // distintos manda cada cuenta con su titular y, al final, qué escribir
+  // (14-oct-2026). Si el recuadro crece más que el timbre, la hoja se aprieta
+  // por niveles como con cualquier otra cosa que no cabe.
+  const pagoAnchoTexto = pagoAncho - 2 * PAGO_PAD - (qr ? QR_LADO + PAGO_PAD : 0);
   const pagoLineas = (rep.pago && Array.isArray(rep.pago.lineas) ? rep.pago.lineas : [])
     .filter((l) => typeof l === "string" && l.trim())
-    .slice(0, 4)
-    .flatMap((l) => wrapToWidth(l.trim(), font, 8.5, pagoAncho - 2 * PAGO_PAD))
-    .slice(0, 6);
-  const pagoTitulo = pagoLineas.length > 0 && rep.pago.titulo ? String(rep.pago.titulo).slice(0, 46) : "";
-  const pagoAlto = pagoLineas.length > 0 ? 2 * PAGO_PAD + (pagoTitulo ? 11 : 0) + pagoLineas.length * 10.5 - 3 : 0;
-  // Lo que ocupa la columna de la derecha: las tres líneas de la leyenda y, si
-  // hay, el recuadro.
-  const altoLeyenda = 29 + (pagoAlto > 0 ? 9 + pagoAlto : 0);
-  const altoTimbre = QZ + Math.max(drawH + QZ, altoLeyenda) + aireBajoTimbre;
+    .slice(0, 5)
+    .flatMap((l) => wrapToWidth(l.trim(), font, 8.5, pagoAnchoTexto))
+    .slice(0, qr ? 10 : 8)
+    .concat(lineasDelComprobante(rep.pago, font, pagoAnchoTexto, wrapToWidth));
+  const pagoTitulo = (pagoLineas.length > 0 || qr) && rep.pago.titulo ? String(rep.pago.titulo).slice(0, qr ? 32 : 46) : "";
+  const pagoAltoTexto = pagoLineas.length > 0 || pagoTitulo
+    ? (pagoTitulo ? 11 : 0) + pagoLineas.length * 10.5 - (pagoLineas.length > 0 ? 3 : 0)
+    : 0;
+  const pagoAltoQr = qr ? QR_LADO + (qrLeyenda ? 9 : 0) : 0;
+  const pagoAlto = pagoLineas.length > 0 || qr ? 2 * PAGO_PAD + Math.max(pagoAltoTexto, pagoAltoQr) : 0;
+
+  // Leyenda del timbre DEBAJO del código, en su misma columna. Se parte al
+  // ancho del PDF417 para no invadir el recuadro de pago.
+  const displayUrl = (input.verifyUrl || DEFAULT_VERIFY_URL).replace(/^https?:\/\//, "");
+  const resol = input.resolucion ? `${input.resolucion} — ` : "";
+  const verifyLineas = wrapToWidth(
+    `${resol}Verifique este documento en ${displayUrl}`,
+    font, 7.5, drawW,
+  );
+  const folioLineas = wrapToWidth(
+    `Folio ${input.folio} · DTE ${tipoDte} · ${String(input.emisor.razonSocial || "").trim()}`,
+    font, 7, drawW,
+  );
+  const altoCaption = 11 + verifyLineas.length * 9.5 + 1 + folioLineas.length * 9 + 4;
+  const altoPago = pagoAlto > 0 ? pagoAlto : 0;
+  const altoTimbre = QZ + Math.max(drawH + QZ + 6 + altoCaption, altoPago) + aireBajoTimbre;
   let desborda = afterTotalsY - altoTimbre < reservaPie;
   if (desborda && nivel >= NIVEL_SEGUNDA_HOJA) {
     page = doc.addPage([PAGE_W, PAGE_H]);
@@ -743,31 +873,51 @@ async function dibujarBoleta(input, nivel) {
   });
   page.drawSvgPath(bc.path, { x: tbX, y: tbTop, scale: sc, color: C.black });
 
-  let capY = tbTop - 4;
-  text("Timbre Electrónico SII", capX, capY, 9, bold, C.deepGreen);
+  let capY = tbTop - drawH - QZ - 6;
+  text("Timbre Electrónico SII", tbX, capY, 9, bold, C.deepGreen);
   capY -= 13;
-  const displayUrl = (input.verifyUrl || DEFAULT_VERIFY_URL).replace(/^https?:\/\//, "");
-  const resol = input.resolucion ? `${input.resolucion} — ` : "";
-  text(`${resol}Verifique este documento en ${displayUrl}`, capX, capY, 7.5, font, C.gray);
-  capY -= 12;
-  text(`Folio ${input.folio} · DTE ${tipoDte} · ${String(input.emisor.razonSocial || "").slice(0, 42)}`, capX, capY, 7.5, font, C.gray);
+  for (const linea of verifyLineas) {
+    text(linea, tbX, capY, 7.5, font, C.gray);
+    capY -= 9.5;
+  }
+  capY -= 1;
+  for (const linea of folioLineas) {
+    text(linea, tbX, capY, 7, font, C.gray);
+    capY -= 9;
+  }
   if (pagoAlto > 0) {
-    const pagoTop = capY - 9;
-    roundRect(capX, pagoTop, pagoAncho, pagoAlto, 5, { fill: C.cardBg, border: C.cardBorder, borderW: 0.8 });
+    const pagoTop = tbTop - 4;
+    roundRect(pagoX, pagoTop, pagoAncho, pagoAlto, 5, { fill: C.cardBg, border: C.cardBorder, borderW: 0.8 });
     let py = pagoTop - PAGO_PAD - 6;
     if (pagoTitulo) {
-      text(pagoTitulo, capX + PAGO_PAD, py, 8, bold, C.brandGreen);
+      text(pagoTitulo, pagoX + PAGO_PAD, py, 8, bold, C.brandGreen);
       py -= 11;
     }
     for (const linea of pagoLineas) {
-      text(linea, capX + PAGO_PAD, py, 8.5, font, C.gray);
+      text(linea, pagoX + PAGO_PAD, py, 8.5, font, C.gray);
       py -= 10.5;
     }
-    capY = pagoTop - pagoAlto;
+    if (qr) {
+      // Sobre blanco, con su zona quieta: el fondo del recuadro es de color.
+      const qx = pagoX + pagoAncho - PAGO_PAD - QR_LADO;
+      const qTop = pagoTop - PAGO_PAD;
+      const esc = QR_LADO / (qr.size + 2 * QR_ZONA_QUIETA);
+      page.drawRectangle({ x: qx, y: qTop - QR_LADO, width: QR_LADO, height: QR_LADO, color: C.white });
+      page.drawSvgPath(qr.path, {
+        x: qx + QR_ZONA_QUIETA * esc, y: qTop - QR_ZONA_QUIETA * esc, scale: esc, color: C.black,
+      });
+      // En negrita y en el verde del título del recuadro: es la invitación a pagar,
+      // no una nota al pie (founder, 15-oct-2026). Antes iba en gris y sin negrita.
+      if (qrLeyenda) textC(qrLeyenda, qx + QR_LADO / 2, qTop - QR_LADO - 7, 7.5, bold, C.brandGreen);
+    }
   }
 
   // Punto más bajo de la fila del timbre (incluye la quiet zone inferior).
-  let belowY = Math.min(tbTop - drawH - QZ, capY) - aireBajoTimbre;
+  let belowY = Math.min(
+    tbTop - drawH - QZ,
+    capY,
+    pagoAlto > 0 ? tbTop - 4 - pagoAlto : capY,
+  ) - aireBajoTimbre;
 
   // La nota al pie ya no exige diagonal: con watermark cae al default de demo;
   // sin watermark se renderiza sola (branding de tenants white-label).
@@ -814,7 +964,6 @@ async function dibujarBoleta(input, nivel) {
   // en otras (p.ej. suscripción SaaS) no corresponde citarla. Sin slice que corte
   // el texto a media palabra (antes "…Ley 20." quedaba truncado); se acota el
   // nombre del emisor para que la línea completa quepa centrada.
-  const emisorNombre = String(input.emisor.razonSocial || "").slice(0, 40);
   const leyRef = input.lectura ? " · Ley 20.998" : "";
   // SIN default de marca. Antes caía a "ComunidadRural": el nombre del primer
   // cliente impreso en el documento de cualquiera que no pasara el campo. Este
@@ -824,8 +973,11 @@ async function dibujarBoleta(input, nivel) {
   // línea quepa centrada en una sola.
   const plataforma = String(input.plataforma || "").slice(0, 24);
   const viaPlataforma = plataforma ? ` y declarado al SII a través de ${plataforma}` : "";
-  const legal = `Documento tributario electrónico emitido por ${emisorNombre}${viaPlataforma}${leyRef}.`;
-  textC(legal, PAGE_W / 2, belowY, 7.5, font, C.grayLabel);
+  const legal = lineaQueCabe(
+    (nombre) => `Documento tributario electrónico emitido por ${nombre}${viaPlataforma}${leyRef}.`,
+    String(input.emisor.razonSocial || "").trim(), CONTENT_W, 7.5, 6.5,
+  );
+  textC(legal.texto, PAGE_W / 2, belowY, legal.size, font, C.grayLabel);
   if (nota) {
     textC(String(nota).slice(0, 110), PAGE_W / 2, belowY - 11, 7.5, font, C.grayLabel);
   }
