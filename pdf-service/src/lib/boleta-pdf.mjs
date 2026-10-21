@@ -603,9 +603,15 @@ async function dibujarBoleta(input, nivel) {
     page.drawLine({ start: { x: MARGIN, y }, end: { x: RIGHT, y }, thickness: 0.4, color: C.line });
     y -= 16;
   }
-  // Las boletas con muchas notas (aviso de corte + deuda + pagos) tienen menos
-  // aire disponible: se les da la mitad, para no empujarlas a una segunda hoja.
-  const extraGap = (Array.isArray(rep.notas) ? rep.notas.length : 0) >= 4 ? 5 : 10;
+  // "Pagos recibidos" no va en la columna izquierda: se imprime justo arriba
+  // del recuadro de pago, en el espacio que queda al lado del timbre.
+  const notas = Array.isArray(rep.notas) ? rep.notas.filter(Boolean) : [];
+  const esPagoRecibido = (n) => /^Pagos recibidos/i.test(String(n));
+  const hayPago = Boolean(rep.pago && (rep.pago.qr || (Array.isArray(rep.pago.lineas) && rep.pago.lineas.length)));
+  const notasIzquierda = notas.filter((n) => !(hayPago && esPagoRecibido(n)));
+  // Las boletas con muchas notas (aviso de corte + deuda) tienen menos aire
+  // disponible: se les da la mitad, para no empujarlas a una segunda hoja.
+  const extraGap = notasIzquierda.length >= 4 ? 5 : 10;
   y += 15 - sp.seccion - extraGap;
 
   // ── Totales (derecha) ────────────────────────────────────────────────────
@@ -792,8 +798,7 @@ async function dibujarBoleta(input, nivel) {
   if (conPanel) y = Math.min(y, panelY);
   // Notas del emisor: van a la IZQUIERDA y NO suman al total (p.ej. un acuse de
   // pagos recibidos, que informa pero no cobra).
-  for (const nota of Array.isArray(rep.notas) ? rep.notas : []) {
-    if (!nota) continue;
+  for (const nota of notasIzquierda) {
     text(String(nota).slice(0, 118), MARGIN, y, 8, font, C.grayLabel);
     y -= 14.5;
   }
@@ -900,6 +905,14 @@ async function dibujarBoleta(input, nivel) {
   if (pagoAlto > 0) {
     // Borde inferior alineado con el de la leyenda del timbre.
     const pagoTop = capBottom + pagoAlto;
+    // Pagos recibidos: en el hueco de arriba del recuadro, al lado del timbre.
+    const pagos = hayPago ? notas.find(esPagoRecibido) : null;
+    if (pagos) {
+      const lineasPago = wrapToWidth(String(pagos).slice(0, 118), font, 7.5, pagoAncho);
+      lineasPago.forEach((linea, i) => {
+        text(linea, pagoX, pagoTop + 8 + (lineasPago.length - 1 - i) * 9, 7.5, font, C.grayLabel);
+      });
+    }
     roundRect(pagoX, pagoTop, pagoAncho, pagoAlto, 5, { fill: C.cardBg, border: C.cardBorder, borderW: 0.8 });
     let py = pagoTop - PAGO_PAD - 6;
     if (pagoTitulo) {
