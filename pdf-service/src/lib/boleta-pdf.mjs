@@ -297,7 +297,7 @@ export const NIVEL_SEGUNDA_HOJA = 6;
  *   aire      bajo el timbre, fuera de su zona quieta
  */
 const ESPACIADO = [
-  { seccion: 18, dato: 14, fila: 13.5, sub: 9.5, trasSub: 13.5, corte: 4, aire: 16 },
+  { seccion: 20, dato: 14.5, fila: 14.5, sub: 10.5, trasSub: 16, corte: 4, aire: 16 },
   { seccion: 12, dato: 12.5, fila: 13.5, sub: 9.5, trasSub: 13.5, corte: 4, aire: 8 },
   { seccion: 10, dato: 12, fila: 12, sub: 8.5, trasSub: 12, corte: 3, aire: 6 },
   { seccion: 7, dato: 11.5, fila: 11.5, sub: 8, trasSub: 11.5, corte: 2, aire: 4 },
@@ -599,9 +599,9 @@ async function dibujarBoleta(input, nivel) {
     textC(fmtCant(it.cantidad), col.cant + 25, y, 10, font, C.black);
     textR(fmtCLP(it.precio), col.vu + 70, y, 10, font, C.black);
     textR(fmtCLP(valor), col.tot, y, 10, font, C.black);
-    y -= 9;
+    y -= 10;
     page.drawLine({ start: { x: MARGIN, y }, end: { x: RIGHT, y }, thickness: 0.4, color: C.line });
-    y -= 15;
+    y -= 16;
   }
   y += 15 - sp.seccion;
 
@@ -681,7 +681,7 @@ async function dibujarBoleta(input, nivel) {
     .slice(0, 7);
   if (filasCalculo.length > 0) {
     text(String(calculo.titulo || "Cálculo de consumo").slice(0, 46), panelX, panelY, 8, bold, C.brandGreen);
-    panelY -= 12;
+    panelY -= 13;
     const cTramo = panelX + 3;
     const cM3 = panelX + panelW * 0.46;
     const cValor = panelX + panelW * 0.65;
@@ -691,13 +691,13 @@ async function dibujarBoleta(input, nivel) {
     textR("M3", cM3, panelY + 2, 6.2, bold, C.white);
     textR("VALOR ($)", cValor, panelY + 2, 6.2, bold, C.white);
     textR("TOTAL", cTotal, panelY + 2, 6.2, bold, C.white);
-    panelY -= 12;
+    panelY -= 13;
     for (const f of filasCalculo) {
       text(String(f.tramo).slice(0, 22), cTramo, panelY, 6.5, font, C.gray);
       textR(String(f.m3 ?? "").slice(0, 8), cM3, panelY, 6.5, font, C.black);
       textR(String(f.valor ?? "").slice(0, 12), cValor, panelY, 6.5, font, C.black);
       textR(String(f.total ?? "").slice(0, 12), cTotal, panelY, 6.5, font, C.black);
-      panelY -= 9.5;
+      panelY -= 10.5;
     }
     const fact = calculo.facturado;
     if (fact) {
@@ -705,7 +705,7 @@ async function dibujarBoleta(input, nivel) {
       text(String(fact.label || "Facturado").slice(0, 22), cTramo, panelY - 2, 7, bold, C.black);
       textR(String(fact.m3 ?? "").slice(0, 8), cM3, panelY - 2, 7, bold, C.black);
       textR(String(fact.total ?? "").slice(0, 12), cTotal, panelY - 2, 7, bold, C.black);
-      panelY -= 12;
+      panelY -= 13;
     }
     panelY -= 6;
   }
@@ -782,8 +782,8 @@ async function dibujarBoleta(input, nivel) {
   y -= 10;
   text("TOTAL A PAGAR", totLabelX, y, 12, bold, C.deepGreen);
   textR(totalAPagar, RIGHT, y, 14, bold, C.deepGreen);
-  // 15pt: la nota de abajo corre por la izquierda, bajo el rótulo del total.
-  y -= 15;
+  // 17pt: la nota de abajo corre por la izquierda, bajo el rótulo del total.
+  y -= 18;
   // Lo que sigue (notas y timbre) va bajo lo MÁS bajo de las dos columnas: con
   // pocos cargos, el panel izquierdo termina más abajo que los totales.
   if (conPanel) y = Math.min(y, panelY);
@@ -792,9 +792,9 @@ async function dibujarBoleta(input, nivel) {
   for (const nota of Array.isArray(rep.notas) ? rep.notas : []) {
     if (!nota) continue;
     text(String(nota).slice(0, 118), MARGIN, y, 8, font, C.grayLabel);
-    y -= 12;
+    y -= 14.5;
   }
-  let afterTotalsY = y - 2;
+  let afterTotalsY = y - 7;
 
   // ── Timbre PDF417 (izquierda) ────────────────────────────────────────────
   // Tamaño: X Dim objetivo (> mínimo SII 6.7), acotado por la envolvente ≤9×3 cm.
@@ -824,13 +824,13 @@ async function dibujarBoleta(input, nivel) {
   // arriba de la franja de vencimiento (pedido del founder, 21-oct-2026). Antes
   // flotaba arriba, desalineado con la leyenda.
   const pagoX = tbX + drawW + QZ + 4;
-  const PAGO_PAD = 8;
+  const PAGO_PAD = 7;
   const pagoAncho = RIGHT - pagoX;
   // Un QR del emisor (su cuenta, su portal de pago), adentro del recuadro y a la
   // derecha del texto. Es opcional: sin `pago.qr` el recuadro queda como estaba.
   // Con su zona quieta mide 62 pt (2,2 cm): un QR de 37 módulos sale a unos
   // 0,48 mm por módulo, que una cámara de teléfono lee sin acercarse.
-  const QR_LADO = 62;
+  const QR_LADO = 58;
   const qrTexto = rep.pago && typeof rep.pago.qr === "string" ? rep.pago.qr.trim() : "";
   const qr = qrTexto ? await buildQr(qrTexto) : null;
   const qrLeyenda = qr && rep.pago.qrLeyenda ? String(rep.pago.qrLeyenda).slice(0, 22) : "";
@@ -849,7 +849,7 @@ async function dibujarBoleta(input, nivel) {
     .concat(lineasDelComprobante(rep.pago, font, pagoAnchoTexto, wrapToWidth));
   const pagoTitulo = (pagoLineas.length > 0 || qr) && rep.pago.titulo ? String(rep.pago.titulo).slice(0, qr ? 32 : 46) : "";
   const pagoAltoTexto = pagoLineas.length > 0 || pagoTitulo
-    ? (pagoTitulo ? 11 : 0) + pagoLineas.length * 10.5 - (pagoLineas.length > 0 ? 3 : 0)
+    ? (pagoTitulo ? 12 : 0) + pagoLineas.length * 11.5 - (pagoLineas.length > 0 ? 3 : 0)
     : 0;
   const pagoAltoQr = qr ? QR_LADO + (qrLeyenda ? 9 : 0) : 0;
   const pagoAlto = pagoLineas.length > 0 || qr ? 2 * PAGO_PAD + Math.max(pagoAltoTexto, pagoAltoQr) : 0;
@@ -866,7 +866,7 @@ async function dibujarBoleta(input, nivel) {
     `Folio ${input.folio} · DTE ${tipoDte} · ${String(input.emisor.razonSocial || "").trim()}`,
     font, 7, drawW,
   );
-  const altoCaption = 13 + verifyLineas.length * 9.5 + 1 + folioLineas.length * 9 + 4;
+  const altoCaption = 14 + verifyLineas.length * 10 + 1 + folioLineas.length * 9.5 + 4;
   const altoPago = pagoAlto > 0 ? pagoAlto : 0;
   const altoTimbre = QZ + drawH + QZ + 6 + altoCaption + aireBajoTimbre;
   let desborda = afterTotalsY - altoTimbre < reservaPie;
@@ -883,15 +883,15 @@ async function dibujarBoleta(input, nivel) {
 
   let capY = tbTop - drawH - QZ - 6;
   text("Timbre Electrónico SII", tbX, capY, 9, bold, C.deepGreen);
-  capY -= 13;
+  capY -= 14;
   for (const linea of verifyLineas) {
     text(linea, tbX, capY, 7.5, font, C.gray);
-    capY -= 9.5;
+    capY -= 10;
   }
   capY -= 1;
   for (const linea of folioLineas) {
     text(linea, tbX, capY, 7, font, C.gray);
-    capY -= 9;
+    capY -= 9.5;
   }
   const capBottom = capY;
   if (pagoAlto > 0) {
@@ -901,11 +901,11 @@ async function dibujarBoleta(input, nivel) {
     let py = pagoTop - PAGO_PAD - 6;
     if (pagoTitulo) {
       text(pagoTitulo, pagoX + PAGO_PAD, py, 8, bold, C.brandGreen);
-      py -= 11;
+      py -= 12;
     }
     for (const linea of pagoLineas) {
       text(linea, pagoX + PAGO_PAD, py, 8.5, font, C.gray);
-      py -= 10.5;
+      py -= 11.5;
     }
     if (qr) {
       // Sobre blanco, con su zona quieta: el fondo del recuadro es de color.
