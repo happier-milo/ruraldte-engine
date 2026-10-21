@@ -440,7 +440,12 @@ async function dibujarBoleta(input, nivel) {
     // así que mandar solo el tercero deja los otros tres en su default.
     const HEADERS_DEFAULT = ["Lectura anterior", "Lectura actual", "Consumo del período", "Tarifa vigente"];
     const etiquetas = Array.isArray(L.etiquetas) ? L.etiquetas : [];
-    const headers = HEADERS_DEFAULT.map((d, i) => {
+    // La tarifa en la franja es OPCIONAL: el Manual de Facturación SSR no la
+    // exige (solo lecturas y consumo). Cuando el emisor no la manda, la franja
+    // va con 3 columnas y el desglose por tramo queda en "Cálculo de consumo".
+    const conTarifa = L.tarifa != null && Number.isFinite(Number(L.tarifa)) && Number(L.tarifa) > 0;
+    const nCols = conTarifa ? 4 : 3;
+    const headers = HEADERS_DEFAULT.slice(0, nCols).map((d, i) => {
       const e = etiquetas[i];
       return typeof e === "string" && e.trim() ? e.trim().slice(0, 28) : d;
     });
@@ -448,15 +453,15 @@ async function dibujarBoleta(input, nivel) {
       `${fmtCant(L.anterior)} ${u}`,
       `${fmtCant(L.actual)} ${u}`,
       `${fmtCant(L.consumo)} ${u}`,
-      `$${fmtNum(L.tarifa)} / ${u}`,
+      ...(conTarifa ? [`$${fmtNum(L.tarifa)} / ${u}`] : []),
     ];
-    const colW = CONTENT_W / 4;
-    roundRect(MARGIN, y + 4, CONTENT_W, 20, 3, { fill: C.deepGreen });
-    for (let i = 0; i < 4; i++) {
+    const colW = CONTENT_W / nCols;
+    roundRect(MARGIN, y + 4, CONTENT_W, 20, 3, { fill: C.brandGreen });
+    for (let i = 0; i < nCols; i++) {
       textC(headers[i], MARGIN + colW * (i + 0.5), y - 9, 8, bold, C.white);
     }
     y -= 22;
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < nCols; i++) {
       const isConsumo = i === 2;
       textC(vals[i], MARGIN + colW * (i + 0.5), y - 11, 9.5, isConsumo ? bold : font, isConsumo ? C.brandGreen : C.black);
     }
@@ -485,7 +490,7 @@ async function dibujarBoleta(input, nivel) {
   // vu apartado de tot lo suficiente para que "Valor unitario" y "Total" no se
   // pisen (cada monto ~45pt; antes vu-right=520 vs tot-right=560 → solapaban).
   const col = { desc: MARGIN + 12, cant: MARGIN + 300, vu: MARGIN + 360, tot: RIGHT - 12 };
-  roundRect(MARGIN, y + 4, CONTENT_W, 20, 3, { fill: C.deepGreen });
+  roundRect(MARGIN, y + 4, CONTENT_W, 20, 3, { fill: C.brandGreen });
   text("Detalle", col.desc, y - 9, 9, bold, C.white);
   textC("Cantidad", col.cant + 25, y - 9, 9, bold, C.white);
   textR("Valor unitario", col.vu + 70, y - 9, 9, bold, C.white);
@@ -586,7 +591,7 @@ async function dibujarBoleta(input, nivel) {
     const cM3 = panelX + panelW * 0.46;
     const cValor = panelX + panelW * 0.65;
     const cTotal = panelX + panelW;
-    page.drawRectangle({ x: panelX, y: panelY - 1, width: panelW, height: 11, color: C.deepGreen });
+    page.drawRectangle({ x: panelX, y: panelY - 1, width: panelW, height: 11, color: C.brandGreen });
     text("TRAMOS", cTramo, panelY + 2, 6.2, bold, C.white);
     textR("M3", cM3, panelY + 2, 6.2, bold, C.white);
     textR("VALOR ($)", cValor, panelY + 2, 6.2, bold, C.white);
