@@ -190,12 +190,15 @@ function roundRectPath(w, h, r) {
  * @property {string} [periodo]            "Mayo 2026" (Datos de la boleta)
  * @property {string} [medidor]            "A-042"
  * @property {string} [medidorLabel]       rótulo de esa fila; default "Medidor N°"
- * @property {{anterior:number, actual:number, consumo:number, tarifa:number, unidad?:string,
- *   fechaAnterior?:string, fechaActual?:string, unidadesAbonar?:number,
+ * @property {{anterior:number, actual?:number|null, consumo:number, tarifa?:number, unidad?:string,
+ *   fechaAnterior?:string, fechaActual?:string, unidadesAbonar?:number, estimada?:boolean,
  *   etiquetas?:string[]}} [lectura]
  *   Tabla de medidor. `fechaAnterior`/`fechaActual` son la fecha en que se tomó
  *   cada lectura; `unidadesAbonar` son las unidades a abonar (+) o restar (−) en
  *   futuras facturaciones cuando el período se facturó sin lectura.
+ *
+ *   `estimada`: cuando el período se facturó sin lectura, la franja muestra la
+ *   lectura anterior y el consumo estimado, con "sin lectura" en la actual.
  *
  *   `unidad` y `etiquetas` son lo que hace que esta tabla NO sea sanitaria: la
  *   unidad ya era del emisor (default "m³") y los cuatro encabezados también lo
@@ -532,14 +535,18 @@ async function dibujarBoleta(input, nivel) {
     // exige (solo lecturas y consumo). Cuando el emisor no la manda, la franja
     // va con 3 columnas y el desglose por tramo queda en "Cálculo de consumo".
     const conTarifa = L.tarifa != null && Number.isFinite(Number(L.tarifa)) && Number(L.tarifa) > 0;
+    const esEstimada = L.estimada === true;
     const nCols = conTarifa ? 4 : 3;
-    const headers = HEADERS_DEFAULT.slice(0, nCols).map((d, i) => {
+    const baseHeaders = esEstimada
+      ? ["Lectura anterior", "Lectura actual", "Consumo estimado"]
+      : HEADERS_DEFAULT;
+    const headers = baseHeaders.slice(0, nCols).map((d, i) => {
       const e = etiquetas[i];
       return typeof e === "string" && e.trim() ? e.trim().slice(0, 28) : d;
     });
     const vals = [
       `${fmtCant(L.anterior)} ${u}`,
-      `${fmtCant(L.actual)} ${u}`,
+      esEstimada ? "sin lectura" : `${fmtCant(L.actual)} ${u}`,
       `${fmtCant(L.consumo)} ${u}`,
       ...(conTarifa ? [`$${fmtNum(L.tarifa)} / ${u}`] : []),
     ];
@@ -554,7 +561,7 @@ async function dibujarBoleta(input, nivel) {
       textC(vals[i], MARGIN + colW * (i + 0.5), y - 11, 9.5, isConsumo ? bold : font, isConsumo ? C.brandGreen : C.black);
     }
     // La FECHA en que se tomó cada lectura, bajo su valor.
-    const fechas = [L.fechaAnterior, L.fechaActual];
+    const fechas = [L.fechaAnterior, esEstimada ? null : L.fechaActual];
     const subH = fechas.some(Boolean) ? 10 : 0;
     for (let i = 0; i < 2; i++) {
       if (!fechas[i]) continue;
@@ -785,7 +792,7 @@ async function dibujarBoleta(input, nivel) {
   for (const nota of Array.isArray(rep.notas) ? rep.notas : []) {
     if (!nota) continue;
     text(String(nota).slice(0, 118), MARGIN, y, 8, font, C.grayLabel);
-    y -= 10;
+    y -= 12;
   }
   let afterTotalsY = y - 2;
 
@@ -812,9 +819,10 @@ async function dibujarBoleta(input, nivel) {
     (input.watermarkNote || input.watermark ? 11 : 0) +
     (input.vencimiento || rep.leyendaVencimiento ? 42 : 0);
   const aireBajoTimbre = sp.aire;
-  // Cómo pagar: un recuadro a la derecha del timbre. El timbre y su leyenda
-  // van en la columna izquierda: la leyenda DEBAJO del código, no al lado
-  // (pedido del founder, 21-oct-2026).
+  // Cómo pagar: un recuadro a la derecha del timbre, pero pegado ABAJO: su
+  // borde inferior queda al mismo nivel que el de la leyenda del timbre, justo
+  // arriba de la franja de vencimiento (pedido del founder, 21-oct-2026). Antes
+  // flotaba arriba, desalineado con la leyenda.
   const pagoX = tbX + drawW + QZ + 4;
   const PAGO_PAD = 8;
   const pagoAncho = RIGHT - pagoX;
@@ -858,9 +866,9 @@ async function dibujarBoleta(input, nivel) {
     `Folio ${input.folio} · DTE ${tipoDte} · ${String(input.emisor.razonSocial || "").trim()}`,
     font, 7, drawW,
   );
-  const altoCaption = 11 + verifyLineas.length * 9.5 + 1 + folioLineas.length * 9 + 4;
+  const altoCaption = 13 + verifyLineas.length * 9.5 + 1 + folioLineas.length * 9 + 4;
   const altoPago = pagoAlto > 0 ? pagoAlto : 0;
-  const altoTimbre = QZ + Math.max(drawH + QZ + 6 + altoCaption, altoPago) + aireBajoTimbre;
+  const altoTimbre = QZ + drawH + QZ + 6 + altoCaption + aireBajoTimbre;
   let desborda = afterTotalsY - altoTimbre < reservaPie;
   if (desborda && nivel >= NIVEL_SEGUNDA_HOJA) {
     page = doc.addPage([PAGE_W, PAGE_H]);
@@ -885,8 +893,10 @@ async function dibujarBoleta(input, nivel) {
     text(linea, tbX, capY, 7, font, C.gray);
     capY -= 9;
   }
+  const capBottom = capY;
   if (pagoAlto > 0) {
-    const pagoTop = tbTop - 4;
+    // Borde inferior alineado con el de la leyenda del timbre.
+    const pagoTop = capBottom + pagoAlto;
     roundRect(pagoX, pagoTop, pagoAncho, pagoAlto, 5, { fill: C.cardBg, border: C.cardBorder, borderW: 0.8 });
     let py = pagoTop - PAGO_PAD - 6;
     if (pagoTitulo) {
@@ -913,11 +923,7 @@ async function dibujarBoleta(input, nivel) {
   }
 
   // Punto más bajo de la fila del timbre (incluye la quiet zone inferior).
-  let belowY = Math.min(
-    tbTop - drawH - QZ,
-    capY,
-    pagoAlto > 0 ? tbTop - 4 - pagoAlto : capY,
-  ) - aireBajoTimbre;
+  let belowY = capBottom - aireBajoTimbre;
 
   // La nota al pie ya no exige diagonal: con watermark cae al default de demo;
   // sin watermark se renderiza sola (branding de tenants white-label).
