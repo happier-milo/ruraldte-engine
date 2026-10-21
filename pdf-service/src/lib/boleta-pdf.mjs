@@ -603,7 +603,10 @@ async function dibujarBoleta(input, nivel) {
     page.drawLine({ start: { x: MARGIN, y }, end: { x: RIGHT, y }, thickness: 0.4, color: C.line });
     y -= 16;
   }
-  y += 15 - sp.seccion;
+  // Las boletas con muchas notas (aviso de corte + deuda + pagos) tienen menos
+  // aire disponible: se les da la mitad, para no empujarlas a una segunda hoja.
+  const extraGap = (Array.isArray(rep.notas) ? rep.notas.length : 0) >= 4 ? 5 : 10;
+  y += 15 - sp.seccion - extraGap;
 
   // ── Totales (derecha) ────────────────────────────────────────────────────
   const t = input.totales || {};
